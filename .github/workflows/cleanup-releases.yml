@@ -1,7 +1,7 @@
 name: Clean up unreleased builds
 
-# Deletes the build-NNNNNN releases (and their tags) that were never published to users:
-# the ones still marked as prerelease. Published builds and the build in update.json stay.
+# Deletes the build-NNNNNN releases (and their tags) that are still marked as prerelease.
+# Published releases stay.
 
 on:
   workflow_dispatch:
