@@ -37,14 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$CONFIRM" = "delete" ] || { echo "::error::Type delete to confirm"; exit 1; }
-          for commit in $(git log --format=%H -- update.json); do
-            git show "$commit:update.json" 2>/dev/null | python3 -c 'import json, sys; print(json.load(sys.stdin).get("build", 0))' 2>/dev/null || true
-          done | sort -u > published.txt
-          python3 -c '
-          import sys
-          keep = sorted({(int(b) - 200000) // 100 for b in open("published.txt").read().split() if b.isdigit() and int(b) > 200000})
-          print(" ".join(map(str, keep)))
-          ' > keep.txt
+          touch keep.txt
           echo "Keeping runs of published builds: $(cat keep.txt)"
           gh run list --repo "$GITHUB_REPOSITORY" --workflow ayugram-ios.yml --limit 1000 --json databaseId,number,status \
             --jq '.[] | "\(.databaseId) \(.number) \(.status)"' > runs.txt

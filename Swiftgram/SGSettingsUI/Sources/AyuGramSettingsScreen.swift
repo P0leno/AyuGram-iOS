@@ -12,7 +12,7 @@ import SGSimpleSettings
 import SGStrings
 
 private enum AyuScreenSection: Int32 {
-    case hero, ghost, hide, behavior, content, chats, history, transfer, client, update, security, support
+    case hero, ghost, hide, behavior, content, chats, history, transfer, client, support
 }
 
 private enum AyuScreenToggle: Equatable {
@@ -21,11 +21,10 @@ private enum AyuScreenToggle: Equatable {
     case ignoreProtection, screenshots
     case history, premium
     case scheduleInGhost, disableAds, disableLinkWarning, disableGreeting, dimDeleted, repeatMessage, confirmStickers, confirmGifs, confirmRead
-    case anonymousStats
 }
 
 private enum AyuScreenLink: Equatable {
-    case history, appearance, update, checkUpdates, channel, developer, importChat, silentSending, sessionLog, buildInfo, reportScam
+    case history, appearance, channel, developer, importChat, silentSending, sessionLog
 }
 
 private enum AyuScreenTint: Equatable {
@@ -113,7 +112,7 @@ private enum AyuScreenEntry: ItemListNodeEntry {
     }
 }
 
-private func ayuScreenEntries(data: PresentationData, privacy: AyuGramPrivacySettings, extra: AyuGramExtraSettings, client: AyuGramClientSettings, hasAppearance: Bool, update: AyuGramUpdateInfo?) -> [AyuScreenEntry] {
+private func ayuScreenEntries(data: PresentationData, privacy: AyuGramPrivacySettings, extra: AyuGramExtraSettings, client: AyuGramClientSettings, hasAppearance: Bool) -> [AyuScreenEntry] {
     let locale = data.strings.baseLanguageCode
     func s(_ key: String) -> String {
         return i18n(key, locale)
@@ -124,9 +123,6 @@ private func ayuScreenEntries(data: PresentationData, privacy: AyuGramPrivacySet
     var entries: [AyuScreenEntry] = []
 
     entries.append(.hero(id: 0, title: "AyuGram", status: s(ghost ? "Ayu.HeroGhostOn" : "Ayu.HeroGhostOff"), detail: i18n("Ayu.HeroHidden", locale, "\(hiddenCount)", "\(hidden.count)"), active: ghost || hiddenCount > 0))
-    if let update {
-        entries.append(.link(id: 50, section: .update, link: .update, symbol: "arrow.down.circle.fill", tint: .green, title: s("Ayu.UpdateAvailable") + " · " + update.version, label: ""))
-    }
 
     entries.append(.header(id: 100, section: .ghost, text: s("Ayu.Ghost")))
     entries.append(.toggle(id: 110, section: .ghost, key: .ghost, symbol: "eye.slash.fill", tint: .purple, title: s("Ayu.Ghost"), subtitle: s("Ayu.GhostSubtitle"), value: ghost, enabled: true))
@@ -180,18 +176,10 @@ private func ayuScreenEntries(data: PresentationData, privacy: AyuGramPrivacySet
     }
     entries.append(.footer(id: 650, section: .client, text: s("Ayu.LocalOnly")))
 
-    let security = AyuGramSecurity.shared
-    entries.append(.header(id: 690, section: .security, text: s("Ayu.SecuritySection")))
-    entries.append(.link(id: 691, section: .security, link: .buildInfo, symbol: security.status == .official ? "checkmark.shield.fill" : "exclamationmark.shield.fill", tint: security.status == .official ? .green : (security.status == .modified ? .red : .gray), title: s("Ayu.BuildStatus"), label: ayuGramBuildStatusTitle(security.status, locale: data.strings.baseLanguageCode)))
-    entries.append(.link(id: 692, section: .security, link: .reportScam, symbol: "exclamationmark.bubble.fill", tint: .orange, title: s("Ayu.ReportScam"), label: ""))
-    entries.append(.toggle(id: 693, section: .security, key: .anonymousStats, symbol: "chart.bar.fill", tint: .indigo, title: s("Ayu.AnonymousStats"), subtitle: nil, value: extra.anonymousStats, enabled: true))
-    entries.append(.footer(id: 694, section: .security, text: s("Ayu.AnonymousStatsInfo")))
-
     entries.append(.header(id: 700, section: .support, text: s("Ayu.SupportSection")))
     entries.append(.link(id: 710, section: .support, link: .channel, symbol: "paperplane.fill", tint: .blue, title: s("Ayu.SupportChannel"), label: ""))
     entries.append(.link(id: 720, section: .support, link: .developer, symbol: "person.crop.circle.fill", tint: .purple, title: s("Ayu.SupportDeveloper"), label: ""))
     entries.append(.link(id: 730, section: .support, link: .sessionLog, symbol: "doc.text.fill", tint: .gray, title: s("Ayu.SessionLog"), label: ""))
-    entries.append(.link(id: 740, section: .support, link: .checkUpdates, symbol: "arrow.triangle.2.circlepath", tint: .gray, title: s("Ayu.CheckUpdates"), label: ""))
     return entries
 }
 
@@ -205,16 +193,8 @@ public func ayuGramSettingsScreen(context: AccountContext) -> ViewController {
         let observer = NotificationCenter.default.addObserver(forName: AyuGramSettings.didChange, object: nil, queue: .main) { _ in
             subscriber.putNext(0)
         }
-        let updateObserver = NotificationCenter.default.addObserver(forName: AyuGramUpdates.didChange, object: nil, queue: .main) { _ in
-            subscriber.putNext(0)
-        }
-        let securityObserver = NotificationCenter.default.addObserver(forName: AyuGramSecurity.didChange, object: nil, queue: .main) { _ in
-            subscriber.putNext(0)
-        }
         return ActionDisposable {
             NotificationCenter.default.removeObserver(observer)
-            NotificationCenter.default.removeObserver(updateObserver)
-            NotificationCenter.default.removeObserver(securityObserver)
         }
     }
     let arguments = AyuScreenArguments(toggle: { key, value in
@@ -243,7 +223,6 @@ public func ayuGramSettingsScreen(context: AccountContext) -> ViewController {
         case .confirmStickers: settings.updateExtra { $0.confirmStickers = value }
         case .confirmGifs: settings.updateExtra { $0.confirmGifs = value }
         case .confirmRead: settings.updateExtra { $0.confirmReadReceipt = value }
-        case .anonymousStats: settings.updateExtra { $0.anonymousStats = value }
         }
     }, open: { link in
         switch link {
@@ -252,19 +231,6 @@ public func ayuGramSettingsScreen(context: AccountContext) -> ViewController {
         case .appearance:
             if let controller = ayuGramAppearanceEntryController(context: context) {
                 pushController?(controller)
-            }
-        case .update:
-            if let info = AyuGramUpdates.shared.availableUpdate {
-                presentController?(ayuGramUpdateAlert(context: context, info: info))
-            }
-        case .checkUpdates:
-            AyuGramUpdates.shared.check { info in
-                if let info {
-                    presentController?(ayuGramUpdateAlert(context: context, info: info))
-                } else {
-                    let data = context.sharedContext.currentPresentationData.with { $0 }
-                    presentController?(textAlertController(context: context, title: nil, text: i18n("Ayu.UpToDate", data.strings.baseLanguageCode), actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]))
-                }
             }
         case .channel:
             ayuGramOpenLink(context: context, url: AyuGramUpdates.channelURL)
@@ -282,10 +248,6 @@ public func ayuGramSettingsScreen(context: AccountContext) -> ViewController {
                 activity.popoverPresentationController?.sourceRect = CGRect(origin: CGPoint(x: view.bounds.midX, y: view.bounds.midY), size: CGSize(width: 1.0, height: 1.0))
             }
             window.presentNative(activity)
-        case .buildInfo:
-            presentController?(ayuGramBuildInfoAlert(context: context))
-        case .reportScam:
-            presentController?(ayuGramScamReportPrompt(context: context, completion: {}))
         case .importChat:
             ayuGramImportChat(context: context)
         case .silentSending:
@@ -313,7 +275,7 @@ public func ayuGramSettingsScreen(context: AccountContext) -> ViewController {
     |> deliverOnMainQueue
     |> map { data, _ -> (ItemListControllerState, (ItemListNodeState, AyuScreenArguments)) in
         let settings = AyuGramSettings.shared
-        let entries = ayuScreenEntries(data: data, privacy: settings.snapshot, extra: settings.extra, client: settings.client, hasAppearance: hasAppearance, update: AyuGramUpdates.shared.availableUpdate)
+        let entries = ayuScreenEntries(data: data, privacy: settings.snapshot, extra: settings.extra, client: settings.client, hasAppearance: hasAppearance)
         let state = ItemListControllerState(presentationData: ItemListPresentationData(data), title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: data.strings.Common_Back))
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(data), entries: entries, style: .blocks, animateChanges: true)
         return (state, (listState, arguments))

@@ -1,6 +1,5 @@
 import SGAPIToken
 import SGAPIWebSettings
-import SGSimpleSettings
 import Foundation
 import UIKit
 import Display
@@ -1483,11 +1482,6 @@ public final class ChatListNode: ListViewImpl {
                 activateSearch()
             }
         }, openSGAnnouncement: { [weak self] announcementId, url, needAuth, permanent in
-            // AyuGram: the update notice asks before installing and never reaches Swiftgram's servers.
-            if announcementId == AyuGramUpdates.noticeId {
-                AyuGramUpdates.presentUpdate?()
-                return
-            }
             if let strongSelf = self {
                 if needAuth {
                     let _ = (getSGSettingsURL(context: strongSelf.context, url: url)
