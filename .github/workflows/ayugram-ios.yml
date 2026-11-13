@@ -7,7 +7,7 @@ on:
         description: 'Versions to build (Standard from the selected branch, Custom from its custom branch)'
         type: choice
         options: [both, standard, custom]
-        default: both
+        default: custom
       configuration:
         description: 'Device build configuration'
         type: choice
