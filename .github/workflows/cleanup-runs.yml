@@ -1,8 +1,6 @@
 name: Clean up unreleased build runs
 
-# Deletes the "AyuGram iOS" workflow runs (with their logs and artifacts) whose build was never
-# published to users. A run's build number is 200000 + run number * 100 + attempt; the published
-# builds are every build update.json has ever pointed to. Runs still in progress stay.
+# Deletes the "AyuGram iOS" workflow runs (with their logs and artifacts) except runs still in progress.
 
 on:
   workflow_dispatch:
