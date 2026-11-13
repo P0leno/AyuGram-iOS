@@ -1,8 +1,7 @@
 name: Attach build to release
 
 # Publishes a release from the IPAs a finished "AyuGram iOS" run already produced,
-# without rebuilding. Use it when the build succeeded but attaching the release failed
-# (for example the Actions token was read-only during that run).
+# without rebuilding (for example if release upload failed due to token permissions).
 
 on:
   workflow_dispatch:

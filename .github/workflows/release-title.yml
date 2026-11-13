@@ -1,5 +1,7 @@
 name: Rename build
 
+# Renames a build-NNNNNN GitHub release title.
+
 on:
   workflow_dispatch:
     inputs:
