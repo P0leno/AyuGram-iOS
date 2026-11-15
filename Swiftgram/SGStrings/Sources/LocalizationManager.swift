@@ -36,6 +36,10 @@ public class SGLocalizationManager {
     }
     
     public func localizedString(_ key: String, _ locale: String = SGFallbackLocale, args: CVarArg...) -> String {
+        return self.localizedStringWithArguments(key, locale, arguments: args)
+    }
+
+    public func localizedStringWithArguments(_ key: String, _ locale: String = SGFallbackLocale, arguments args: [CVarArg]) -> String {
         let sanitizedLocale = self.sanitizeLocale(locale)
         
         if let localizedString = findLocalizedString(forKey: key, inLocale: sanitizedLocale) {
@@ -129,6 +133,6 @@ public let i18n = SGLocalizationManager.shared.localizedString
 
 public extension String {
     func i18n(_ locale: String = SGFallbackLocale, args: CVarArg...) -> String {
-        return SGLocalizationManager.shared.localizedString(self, locale, args: args)
+        return SGLocalizationManager.shared.localizedStringWithArguments(self, locale, arguments: args)
     }
 }

@@ -54,16 +54,16 @@ public func ayuPluginConvertEntities(_ rawEntities: [AyuPluginCoreEntity]) -> [M
 }
 
 private func resolveAyuPluginPeerId(transaction: Transaction, rawPeerId: Int64) -> PeerId {
-    let direct = PeerId(rawPeerId)
-    if transaction.getPeer(direct) != nil {
-        return direct
-    }
     if rawPeerId < -1_000_000_000_000 {
         let bareChannelId = -rawPeerId - 1_000_000_000_000
         return PeerId(namespace: Namespaces.Peer.CloudChannel, id: PeerId.Id._internalFromInt64Value(bareChannelId))
     }
     if rawPeerId < 0 {
         return PeerId(namespace: Namespaces.Peer.CloudGroup, id: PeerId.Id._internalFromInt64Value(-rawPeerId))
+    }
+    let direct = PeerId(rawPeerId)
+    if transaction.getPeer(direct) != nil {
+        return direct
     }
     return PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(rawPeerId))
 }

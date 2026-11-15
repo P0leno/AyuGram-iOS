@@ -331,13 +331,13 @@ final class AuthorizedApplicationContext {
         |> deliverOn(Queue.mainQueue())).start(next: { [weak self] messageList in
             if AyuPluginBridge.shared.hasActivePlugins && !AyuPluginBridge.shared.isSafeModeEnabled && !messageList.isEmpty {
                 var pluginEvents: [AyuIncomingMessageEvent] = []
-                let accountId = context.account.peerId.id._internalGetInt64Value()
+                let accountId = context.account.peerId.toInt64()
                 for (messages, _, _, _) in messageList {
                     for msg in messages {
-                        let senderId = msg.author?.id.id._internalGetInt64Value()
+                        let senderId = msg.author?.id.toInt64()
                         pluginEvents.append(AyuIncomingMessageEvent(
                             account: accountId,
-                            peerId: msg.id.peerId.id._internalGetInt64Value(),
+                            peerId: msg.id.peerId.toInt64(),
                             messageId: msg.id.id,
                             senderId: senderId,
                             text: msg.text,

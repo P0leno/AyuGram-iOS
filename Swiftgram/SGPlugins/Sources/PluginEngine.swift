@@ -421,7 +421,12 @@ public final class SGPluginEngine: NSObject, AyuPluginHost, AyuPythonNativeDeleg
             guard let self = self else {
                 return
             }
-            guard self.loadedIds.contains(pluginId) else {
+            let isLoaded: Bool = {
+                self.stateLock.lock()
+                defer { self.stateLock.unlock() }
+                return self.loadedIds.contains(pluginId)
+            }()
+            guard isLoaded else {
                 DispatchQueue.main.async { completion([]) }
                 return
             }

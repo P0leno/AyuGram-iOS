@@ -9445,8 +9445,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
             return messages
         }
         AyuPluginBridge.shared.bindAccountContext(self.context)
-        let accountId = self.context.account.peerId.id._internalGetInt64Value()
-        let chatId = peerId.id._internalGetInt64Value()
+        let accountId = self.context.account.peerId.toInt64()
+        let chatId = peerId.toInt64()
 
         return messages.compactMap { entry in
             guard case let .message(text, attributes, inlineStickers, mediaReference, threadId, replyToMessageId, replyToStoryId, localGroupingKey, correlationId, bubbleUpEmojiOrStickersets) = entry else {
