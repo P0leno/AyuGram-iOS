@@ -248,7 +248,7 @@ def build(source, ci, output, env):
         from ayugram_ghost_checks import check_ghost_and_content
         check_ghost_and_content(source, variant)
         from ayugram_branding import prepare_branding, verify_branding_ipa
-        prepare_branding(source, env=env)
+        branding = prepare_branding(source, env=env)
         from ayugram_python import prepare_python
         prepare_python(source)
         run(make + ['generateProject'] + common + ['--disableProvisioningProfiles'], cwd=source)
@@ -259,7 +259,7 @@ def build(source, ci, output, env):
         if not ipa.is_file():
             raise FileNotFoundError('Make.py succeeded but Swiftgram.ipa is missing')
         verify_ipa(ipa, config['bundle_id'])
-        verify_branding_ipa(ipa)
+        verify_branding_ipa(ipa, branding=branding)
         target = output / ('AyuGram-' + variant + '-unsigned.ipa')
         shutil.copyfile(ipa, target)
         target.chmod(0o644)

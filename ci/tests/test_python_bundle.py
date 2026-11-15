@@ -64,7 +64,9 @@ class TestPythonBundlePreparation(unittest.TestCase):
             archive_sha = _make_synthetic_python_archive(archive)
             wheel = _make_synthetic_wheel(cache / "requests-2.34.2-py3-none-any.whl", "requests", "VERSION='1'\n")
 
-            with mock.patch.object(ayugram_python, "PYTHON_APPLE_SUPPORT_SHA256", archive_sha):
+            with mock.patch.object(ayugram_python, "PYTHON_APPLE_SUPPORT_SHA256", archive_sha), mock.patch.object(
+                ayugram_python, "_resolve_install_name_tool", return_value=None
+            ):
                 result = ayugram_python.prepare_python(
                     source_root=root,
                     python_archive=archive,
