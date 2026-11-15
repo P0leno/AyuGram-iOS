@@ -568,10 +568,11 @@ effective_associated_domains = telegram_associated_domains if telegram_associate
     ["telegram.me", "t.me", "*.t.me", "telegram.org"] if telegram_bundle_id in official_bundle_ids else []
 )
 
-associated_domain_entries = []
-for _dom in effective_associated_domains:
-    associated_domain_entries.append("    <string>applinks:{}</string>".format(_dom))
-    associated_domain_entries.append("    <string>webcredentials:{}</string>".format(_dom))
+associated_domain_entries = [
+    "    <string>{prefix}:{dom}</string>".format(prefix=prefix, dom=_dom)
+    for _dom in effective_associated_domains
+    for prefix in ("applinks", "webcredentials")
+]
 
 associated_domains_fragment = "" if not associated_domain_entries else """
 <key>com.apple.developer.associated-domains</key>
