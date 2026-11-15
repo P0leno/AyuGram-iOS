@@ -41,6 +41,58 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ci.build_configuration(self.env)
 
+    def test_associated_domains_disabled_by_default(self):
+        self.assertEqual(ci.build_configuration(self.env)['associated_domains'], [])
+
+    def test_associated_domains_enabled_default_list(self):
+        self.env['AYUGRAM_ENABLE_ASSOCIATED_DOMAINS'] = 'true'
+        self.assertEqual(
+            ci.build_configuration(self.env)['associated_domains'],
+            ['telegram.org', 't.me', 'telegram.me'],
+        )
+
+    def test_associated_domains_custom_and_invalid(self):
+        self.env['AYUGRAM_ASSOCIATED_DOMAINS'] = ' auth.example.com, *.link.example.com , '
+        self.assertEqual(
+            ci.build_configuration(self.env)['associated_domains'],
+            ['auth.example.com', '*.link.example.com'],
+        )
+        self.env['AYUGRAM_ASSOCIATED_DOMAINS'] = 'https://bad.example.com'
+        with self.assertRaises(ValueError):
+            ci.build_configuration(self.env)
+
+    def test_build_configuration_writes_associated_domains(self):
+        import sys
+        make_dir = str(Path(__file__).resolve().parents[2] / 'build-system' / 'Make')
+        inserted = make_dir not in sys.path
+        if inserted:
+            sys.path.insert(0, make_dir)
+        try:
+            import BuildConfiguration
+            cfg = BuildConfiguration.BuildConfiguration(
+                sg_config='{}',
+                bundle_id='one.ayugram.AyuGram',
+                api_id='12345',
+                api_hash='0123456789abcdef',
+                team_id='TEAMID1234',
+                is_internal_build='true',
+                is_appstore_build='false',
+                appstore_id='0',
+                app_specific_url_scheme='tg',
+                premium_iap_product_id='',
+                enable_siri=True,
+                enable_icloud=False,
+                associated_domains=['auth.example.com', 'telegram.org'],
+            )
+            with tempfile.TemporaryDirectory() as tmp:
+                vars_path = Path(tmp) / 'variables.bzl'
+                cfg.write_to_variables_file('/usr/bin/bazel', False, '', str(vars_path))
+                content = vars_path.read_text(encoding='utf-8')
+                self.assertIn('telegram_associated_domains = ["auth.example.com", "telegram.org"]', content)
+        finally:
+            if inserted and make_dir in sys.path:
+                sys.path.remove(make_dir)
+
 
 class ArtifactTests(unittest.TestCase):
     def make_ipa(self, root, platform='iPhoneOS', executable=True):

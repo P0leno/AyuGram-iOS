@@ -6,6 +6,7 @@ sgdeps = [
     "//Swiftgram/SGAPIWebSettings:SGAPIWebSettings",
     "//Swiftgram/SGAppGroupIdentifier:SGAppGroupIdentifier",
     "//Swiftgram/SGSimpleSettings:SGSimpleSettings",
+    "//Swiftgram/SGPluginBridge:SGPluginBridge",
     "//Swiftgram/SFSafariViewControllerPlus:SFSafariViewControllerPlus",
     "//Swiftgram/SGLogging:SGLogging",
     "//Swiftgram/SGStrings:SGStrings",

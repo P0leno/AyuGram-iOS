@@ -1,0 +1,5 @@
+# Populated cleanly by `python ci/ayugram_python.py` prior to Bazel build
+Python.xcframework/
+python/
+ExtResources/*/Frameworks/
+.prepared_version

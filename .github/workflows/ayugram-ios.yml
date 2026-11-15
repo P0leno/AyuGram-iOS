@@ -17,6 +17,29 @@ on:
         description: 'Label shown after the build number in the release title, for example hotfix'
         required: false
         type: string
+      app_name:
+        description: 'Custom app display name (overrides Swiftgram/AyuBranding/branding.json)'
+        required: false
+        type: string
+      custom_icon_url:
+        description: 'Direct HTTPS URL to a custom PNG or JPG square app icon'
+        required: false
+        type: string
+      custom_icon_name:
+        description: 'Display title for the custom icon in Settings -> App Icon'
+        required: false
+        default: 'Custom'
+        type: string
+      hide_branding:
+        description: 'Hide AyuGram branding labels inside the app UI'
+        required: false
+        type: boolean
+        default: false
+      enable_associated_domains:
+        description: 'Embed Associated Domains (Passkeys/Universal Links; requires Paid Developer profile)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   # Releases hold the IPA behind a direct link, which the in-app updater hands to installer apps.
@@ -44,9 +67,8 @@ jobs:
       - name: Checkout source with submodules
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          # Run from standard: Standard builds standard and Custom builds custom. Run from another
-          # branch: Standard builds it and Custom builds <branch>-custom.
-          ref: ${{ matrix.variant == 'custom' && (github.ref_name == 'standard' && 'custom' || format('{0}-custom', github.ref_name)) || github.ref_name }}
+          # Build from the dispatched branch directly unless dispatching standard vs custom on `standard`.
+          ref: ${{ github.ref_name == 'standard' && matrix.variant == 'custom' && 'custom' || github.ref_name }}
           submodules: recursive
           fetch-depth: 1
           persist-credentials: false
@@ -140,11 +162,16 @@ jobs:
           APP_BUNDLE_ID: ${{ secrets.APP_BUNDLE_ID }}
           AYUGRAM_VARIANT: ${{ matrix.variant }}
           AYUGRAM_CONFIGURATION: ${{ inputs.configuration }}
+          AYUGRAM_APP_NAME: ${{ inputs.app_name }}
+          AYUGRAM_CUSTOM_ICON_URL: ${{ inputs.custom_icon_url }}
+          AYUGRAM_CUSTOM_ICON_NAME: ${{ inputs.custom_icon_name }}
+          AYUGRAM_HIDE_BRANDING: ${{ inputs.hide_branding }}
+          AYUGRAM_ENABLE_ASSOCIATED_DOMAINS: ${{ inputs.enable_associated_domains }}
         run: python -u ci/ayugram_ci.py --source . --ci ci --output artifacts
 
-      # Both variants share one cache; Standard saves it, even after a failed build, so the next run reuses every target that compiled.
+      # Both variants share one cache; Standard saves it (or Custom when building Custom-only).
       - name: Save Bazel cache
-        if: ${{ always() && matrix.variant == 'standard' }}
+        if: ${{ always() && (matrix.variant == 'standard' || inputs.variant == 'custom') }}
         continue-on-error: true
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:

@@ -69,11 +69,9 @@ struct AppBadgeSettingsView: View {
     
     private func onSelectBadge(_ badge: AppBadge) {
         self.selectedBadge = badge
-        if self.context.sharedContext.immediateSGStatus.status > 1 {
-            DispatchQueue.main.async {
-                SGSimpleSettings.shared.customAppBadge = badge.assetName
-                self.context.sharedContext.mainWindow?.badgeView.image = ayuGramAppBadgeImage(style: badge.assetName, scale: 0)
-            }
+        DispatchQueue.main.async {
+            SGSimpleSettings.shared.customAppBadge = badge.assetName
+            self.context.sharedContext.mainWindow?.badgeView.image = ayuGramAppBadgeImage(style: badge.assetName, scale: 0)
         }
     }
     

@@ -15,6 +15,7 @@ import SolidRoundedButtonNode
 import AuthorizationUtils
 import ManagedAnimationNode
 import Markdown
+import SGStrings
 
 private final class PhoneAndCountryNode: ASDisplayNode {
     let strings: PresentationStrings
@@ -320,6 +321,7 @@ final class AuthorizationSequencePhoneEntryControllerNode: ASDisplayNode {
     private let noticeActivateAreaNode: AccessibilityAreaNode
     private let phoneAndCountryNode: PhoneAndCountryNode
     private let contactSyncNode: ContactSyncNode
+    private let savedAccountsButtonNode: HighlightableButtonNode
     private let proceedNode: SolidRoundedButtonNode
     
     private var qrNode: ASImageNode?
@@ -328,6 +330,8 @@ final class AuthorizationSequencePhoneEntryControllerNode: ASDisplayNode {
     var accountUpdated: ((UnauthorizedAccount) -> Void)?
     
     var retryPasskey: (() -> Void)?
+    var loginWithSavedAccount: (() -> Void)?
+    private var savedAccountsCount: Int = 0
     
     private let debugAction: () -> Void
     
@@ -424,6 +428,9 @@ final class AuthorizationSequencePhoneEntryControllerNode: ASDisplayNode {
         
         self.contactSyncNode = ContactSyncNode(theme: theme, strings: strings)
         
+        self.savedAccountsButtonNode = HighlightableButtonNode()
+        self.savedAccountsButtonNode.displaysAsynchronously = false
+        
         self.phoneAndCountryNode = PhoneAndCountryNode(strings: strings, theme: theme)
         
         self.proceedNode = SolidRoundedButtonNode(title: self.strings.Login_Continue, theme: SolidRoundedButtonTheme(theme: self.theme), glass: false, height: 50.0, cornerRadius: 50 * 0.5)
@@ -445,10 +452,14 @@ final class AuthorizationSequencePhoneEntryControllerNode: ASDisplayNode {
         self.addSubnode(self.noticeActivateAreaNode)
         self.addSubnode(self.phoneAndCountryNode)
         self.addSubnode(self.contactSyncNode)
+        self.addSubnode(self.savedAccountsButtonNode)
         self.addSubnode(self.proceedNode)
         self.addSubnode(self.animationNode)
         self.addSubnode(self.managedAnimationNode)
         self.contactSyncNode.isHidden = true
+        self.savedAccountsButtonNode.isHidden = account == nil
+        self.savedAccountsButtonNode.addTarget(self, action: #selector(self.savedAccountsPressed), forControlEvents: .touchUpInside)
+        self.updateSavedAccountsCount(0)
         
         self.noticeNode.highlightAttributeAction = { attributes in
             if let _ = attributes[NSAttributedString.Key(rawValue: "URL")] {
@@ -578,6 +589,31 @@ final class AuthorizationSequencePhoneEntryControllerNode: ASDisplayNode {
         self.phoneAndCountryNode.phoneInputNode.codeAndNumber = self.codeAndNumber
         let _ = self.phoneAndCountryNode.processNumberChange(number: self.phoneAndCountryNode.phoneInputNode.number)
     }
+
+    func updateSavedAccountsCount(_ count: Int) {
+        self.savedAccountsCount = count
+        let locale = self.strings.baseLanguageCode
+        let title: String
+        if count > 0 {
+            title = "Keychain.QuickLoginWithCount".i18n(locale, args: "\(count)")
+        } else {
+            title = "Keychain.RestoreBackupLogin".i18n(locale)
+        }
+        self.savedAccountsButtonNode.setAttributedTitle(
+            NSAttributedString(
+                string: title,
+                font: Font.medium(15.0),
+                textColor: self.theme.list.itemAccentColor,
+                paragraphAlignment: .center
+            ),
+            for: []
+        )
+        self.savedAccountsButtonNode.accessibilityLabel = title
+    }
+
+    @objc private func savedAccountsPressed() {
+        self.loginWithSavedAccount?()
+    }
     
     func updateDisplayPasskeyLoginOption() {
         if self.account == nil {
@@ -655,6 +691,14 @@ final class AuthorizationSequencePhoneEntryControllerNode: ASDisplayNode {
             items.append(AuthorizationLayoutItem(node: self.contactSyncNode, size: contactSyncSize, spacingBefore: AuthorizationLayoutItemSpacing(weight: 14.0, maxValue: 14.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
         } else {
             self.contactSyncNode.isHidden = true
+        }
+
+        if self.account != nil {
+            self.savedAccountsButtonNode.isHidden = false
+            let savedAccountsSize = self.savedAccountsButtonNode.measure(CGSize(width: maximumWidth - inset * 2.0, height: CGFloat.greatestFiniteMagnitude))
+            items.append(AuthorizationLayoutItem(node: self.savedAccountsButtonNode, size: CGSize(width: max(savedAccountsSize.width, 160.0), height: max(savedAccountsSize.height, 30.0)), spacingBefore: AuthorizationLayoutItemSpacing(weight: 10.0, maxValue: 10.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
+        } else {
+            self.savedAccountsButtonNode.isHidden = true
         }
 
         if layout.size.width > 320.0, !authorizationLayoutItemsFit(height: layout.size.height - insets.top - insets.bottom - additionalBottomInset, items: items) {

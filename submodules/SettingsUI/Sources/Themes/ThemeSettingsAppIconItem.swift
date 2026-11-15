@@ -381,7 +381,7 @@ class ThemeSettingsAppIconItemNode: ListViewItemNode, ItemListItemNode {
                         }
                         imageNode.lockNode.image = strongSelf.lockImage
                         
-                        if let image = UIImage(named: icon.imageName, in: getAppBundle(), compatibleWith: nil) {
+                        if let image = UIImage(named: icon.imageName, in: getAppBundle(), compatibleWith: nil) ?? UIImage(named: "\(icon.imageName)Mark", in: getAppBundle(), compatibleWith: nil) {
                             let selected = icon.name == item.currentIconName
 
                             var name = "Icon"
@@ -463,7 +463,7 @@ class ThemeSettingsAppIconItemNode: ListViewItemNode, ItemListItemNode {
                                 case "PremiumTurbo":
                                     name = item.strings.Appearance_AppIconTurbo
                                 default:
-                                    name = icon.name
+                                    name = AyuGramBrandingConfig.shared.displayTitle(forIconName: icon.name) ?? icon.name
                             }
                         
                             imageNode.setup(theme: item.theme, icon: image, title: NSAttributedString(string: name, font: selected ? selectedTextFont : textFont, textColor: selected  ? item.theme.list.itemAccentColor : item.theme.list.itemPrimaryTextColor, paragraphAlignment: .center), locked: !item.isPremium && icon.isSGPro, color: item.theme.list.itemPrimaryTextColor, bordered: bordered, selected: selected, action: {

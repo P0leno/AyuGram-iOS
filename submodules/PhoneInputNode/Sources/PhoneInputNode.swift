@@ -215,6 +215,7 @@ public final class PhoneInputNode: ASDisplayNode, UITextFieldDelegate {
         
         self.numberField = TextFieldNode()
         self.numberField.textField.font = font
+        self.numberField.textField.textContentType = .telephoneNumber
         if #available(iOSApplicationExtension 10.0, iOS 10.0, *) {
             self.numberField.textField.keyboardType = .asciiCapableNumberPad
         } else {

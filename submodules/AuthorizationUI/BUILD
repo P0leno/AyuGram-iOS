@@ -1,7 +1,8 @@
 load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
 
 sgdeps = [
-    "//Swiftgram/SGStrings:SGStrings"
+    "//Swiftgram/SGStrings:SGStrings",
+    "//Swiftgram/SGKeychainBackupManager:SGKeychainBackupManager",
 ]
 
 swift_library(
@@ -15,6 +16,7 @@ swift_library(
     ],
     deps = sgdeps + [
         "//submodules/AsyncDisplayKit:AsyncDisplayKit",
+        "//submodules/Postbox:Postbox",
         "//submodules/TelegramCore:TelegramCore",
         "//submodules/Display:Display",
         "//submodules/SSignalKit/SSignalKit",

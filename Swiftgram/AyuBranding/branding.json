@@ -1,0 +1,23 @@
+{
+  "display_name": "AyuGram",
+  "badge_title": "",
+  "hide_client_branding": false,
+  "default_icon": "AyuClassic",
+  "icons": [
+    {
+      "id": "AyuClassic",
+      "title": "AyuClassic",
+      "source": "icons.json:AyuClassic"
+    },
+    {
+      "id": "AyuPurple",
+      "title": "AyuPurple",
+      "source": "icons.json:AyuPurple"
+    },
+    {
+      "id": "AyuRed",
+      "title": "AyuRed",
+      "source": "icons.json:AyuRed"
+    }
+  ]
+}

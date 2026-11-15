@@ -12,6 +12,7 @@ import SGLogging
 import SGAppGroupIdentifier
 import SGStrings
 import SGSimpleSettings
+import SGPluginBridge
 import SGSettingsUI
 import UIKit
 import SwiftSignalKit
@@ -1044,41 +1045,26 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                 
                 
                 // MARK: Swiftgram
-                icons = [
-                    PresentationAppIcon(name: "AyuClassic", imageName: "AyuClassic", isDefault: true),
-                    PresentationAppIcon(name: "AyuPurple", imageName: "AyuPurple"),
-                    PresentationAppIcon(name: "AyuRed", imageName: "AyuRed"),
+                let defaultIconId = AyuGramBrandingConfig.shared.defaultIconId
+                var generatedIcons: [PresentationAppIcon] = []
+                var seenIconIds = Set<String>()
+                for custom in AyuGramBrandingConfig.shared.customIcons {
+                    if seenIconIds.insert(custom.id).inserted {
+                        generatedIcons.append(PresentationAppIcon(name: custom.id, imageName: custom.id, isDefault: custom.id == defaultIconId))
+                    }
+                }
+                let standardIconIds = [
+                    "AyuClassic", "AyuPurple", "AyuRed",
                     // Official Telegram icons
-                    PresentationAppIcon(name: "BlueIcon", imageName: "BlueIcon"),
-                    PresentationAppIcon(name: "New2", imageName: "New2"),
-                    PresentationAppIcon(name: "New1", imageName: "New1"),
-                    PresentationAppIcon(name: "BlackIcon", imageName: "BlackIcon"),
-                    PresentationAppIcon(name: "BlueClassicIcon", imageName: "BlueClassicIcon"),
-                    PresentationAppIcon(name: "BlackClassicIcon", imageName: "BlackClassicIcon"),
-                    PresentationAppIcon(name: "BlueFilledIcon", imageName: "BlueFilledIcon"),
-                    PresentationAppIcon(name: "BlackFilledIcon", imageName: "BlackFilledIcon"),
-                    PresentationAppIcon(name: "WhiteFilledIcon", imageName: "WhiteFilledIcon"),
-                    PresentationAppIcon(name: "Premium", imageName: "Premium"),
-                    PresentationAppIcon(name: "PremiumTurbo", imageName: "PremiumTurbo"),
-                    PresentationAppIcon(name: "PremiumBlack", imageName: "PremiumBlack"),
-                    PresentationAppIcon(name: "SGDefault", imageName: "SGDefault"),
-                    PresentationAppIcon(name: "SGBlack", imageName: "SGBlack"),
-                    PresentationAppIcon(name: "SGLegacy", imageName: "SGLegacy"),
-                    PresentationAppIcon(name: "SGInverted", imageName: "SGInverted"),
-                    PresentationAppIcon(name: "SGWhite", imageName: "SGWhite"),
-                    PresentationAppIcon(name: "SGNight", imageName: "SGNight"),
-                    PresentationAppIcon(name: "SGSky", imageName: "SGSky"),
-                    PresentationAppIcon(name: "SGTitanium", imageName: "SGTitanium"),
-                    PresentationAppIcon(name: "SGPro", imageName: "SGPro"),
-                    PresentationAppIcon(name: "SGDay", imageName: "SGDay"),
-                    PresentationAppIcon(name: "SGGold", imageName: "SGGold"),
-                    PresentationAppIcon(name: "SGDucky", imageName: "SGDucky"),
-                    PresentationAppIcon(name: "SGNeon", imageName: "SGNeon"),
-                    PresentationAppIcon(name: "SGNeonBlue", imageName: "SGNeonBlue"),
-                    PresentationAppIcon(name: "SGGlass", imageName: "SGGlass"),
-                    PresentationAppIcon(name: "SGSparkling", imageName: "SGSparkling"),
-                    PresentationAppIcon(name: "SGBeta", imageName: "SGBeta"),
+                    "BlueIcon", "New2", "New1", "BlackIcon", "BlueClassicIcon", "BlackClassicIcon",
+                    "BlueFilledIcon", "BlackFilledIcon", "WhiteFilledIcon", "Premium", "PremiumTurbo", "PremiumBlack",
+                    "SGDefault", "SGBlack", "SGLegacy", "SGInverted", "SGWhite", "SGNight", "SGSky", "SGTitanium",
+                    "SGPro", "SGDay", "SGGold", "SGDucky", "SGNeon", "SGNeonBlue", "SGGlass", "SGSparkling", "SGBeta"
                 ]
+                for iconId in standardIconIds where seenIconIds.insert(iconId).inserted {
+                    generatedIcons.append(PresentationAppIcon(name: iconId, imageName: iconId, isDefault: iconId == defaultIconId))
+                }
+                icons = generatedIcons
                 // AyuGram: every bundled icon is available without Telegram Premium or Swiftgram Pro.
                 
                 return icons
@@ -2790,6 +2776,14 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             }
         }
         |> deliverOnMainQueue).start(next: { sharedContext, context, authContext in
+            if url.isFileURL && url.pathExtension.lowercased() == "plugin" {
+                AyuPluginBridge.shared.startIfNeeded()
+                if let context {
+                    AyuPluginBridge.shared.bindAccountContext(context.context)
+                }
+                AyuPluginBridge.shared.installPlugin(fromFileURL: url, presentationContext: context?.rootController)
+                return
+            }
             // AyuGram: Bark notifications open the app with this scheme; ayugram://chat?user=ID
             // (or chat=ID, channel=ID) also opens that chat.
             if url.scheme?.lowercased() == "ayugram" {

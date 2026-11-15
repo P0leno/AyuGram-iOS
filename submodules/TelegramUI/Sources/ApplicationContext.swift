@@ -1,5 +1,6 @@
 // MARK: Swiftgram
 import SGSimpleSettings
+import SGPluginBridge
 import Foundation
 import UIKit
 import Intents
@@ -299,6 +300,9 @@ final class AuthorizedApplicationContext {
             }
         }))
 
+        AyuPluginBridge.shared.bindAccountContext(context)
+        AyuPluginBridge.shared.startIfNeeded()
+
         let engine = context.engine
         self.notificationMessagesDisposable.set((context.account.stateManager.notificationMessages
         |> mapToSignal { messageList in
@@ -325,6 +329,27 @@ final class AuthorizedApplicationContext {
             }
         }
         |> deliverOn(Queue.mainQueue())).start(next: { [weak self] messageList in
+            if AyuPluginBridge.shared.hasActivePlugins && !AyuPluginBridge.shared.isSafeModeEnabled && !messageList.isEmpty {
+                var pluginEvents: [AyuIncomingMessageEvent] = []
+                let accountId = context.account.peerId.id._internalGetInt64Value()
+                for (messages, _, _, _) in messageList {
+                    for msg in messages {
+                        let senderId = msg.author?.id.id._internalGetInt64Value()
+                        pluginEvents.append(AyuIncomingMessageEvent(
+                            account: accountId,
+                            peerId: msg.id.peerId.id._internalGetInt64Value(),
+                            messageId: msg.id.id,
+                            senderId: senderId,
+                            text: msg.text,
+                            isOutgoing: !msg.flags.contains(.Incoming),
+                            date: msg.timestamp
+                        ))
+                    }
+                }
+                if !pluginEvents.isEmpty {
+                    AyuPluginBridge.shared.dispatchIncomingMessages(pluginEvents)
+                }
+            }
             if messageList.isEmpty {
                 return
             }

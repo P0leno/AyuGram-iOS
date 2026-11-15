@@ -77,6 +77,19 @@ def build_configuration(env):
             raise ValueError('Invalid format for ' + name)  # Do not print its value.
     if int(values['TELEGRAM_API_ID']) > 2147483647:
         raise ValueError('TELEGRAM_API_ID exceeds Int32')
+    associated_domains = []
+    raw_domains = env.get('AYUGRAM_ASSOCIATED_DOMAINS', '').strip()
+    enable_associated = env.get('AYUGRAM_ENABLE_ASSOCIATED_DOMAINS', '').strip().lower() in ('1', 'true', 'yes', 'on')
+    if raw_domains:
+        for item in raw_domains.split(','):
+            domain = item.strip()
+            if not domain:
+                continue
+            if not re.fullmatch(r'(?:\*\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+', domain):
+                raise ValueError('Invalid domain format in AYUGRAM_ASSOCIATED_DOMAINS')
+            associated_domains.append(domain)
+    elif enable_associated:
+        associated_domains = ['telegram.org', 't.me', 'telegram.me']
     return {
         'bundle_id': values['APP_BUNDLE_ID'],
         'api_id': values['TELEGRAM_API_ID'],
@@ -86,6 +99,7 @@ def build_configuration(env):
         'is_appstore_build': 'false', 'appstore_id': '0',
         'app_specific_url_scheme': 'tg', 'premium_iap_product_id': '',
         'enable_siri': False, 'enable_icloud': False, 'sg_config': '',
+        'associated_domains': associated_domains,
     }
 
 
@@ -234,7 +248,9 @@ def build(source, ci, output, env):
         from ayugram_ghost_checks import check_ghost_and_content
         check_ghost_and_content(source, variant)
         from ayugram_branding import prepare_branding, verify_branding_ipa
-        prepare_branding(source)
+        prepare_branding(source, env=env)
+        from ayugram_python import prepare_python
+        prepare_python(source)
         run(make + ['generateProject'] + common + ['--disableProvisioningProfiles'], cwd=source)
         if not (source / 'Telegram/Swiftgram.xcodeproj').is_dir():
             raise ValueError('Make.py did not generate Telegram/Swiftgram.xcodeproj')

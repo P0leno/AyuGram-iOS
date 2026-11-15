@@ -106,7 +106,24 @@ final class PasskeysScreenComponent: Component {
         }
 
         func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: any Error) {
-            
+            let nsError = error as NSError
+            if nsError.domain == ASAuthorizationError.errorDomain && nsError.code == ASAuthorizationError.canceled.rawValue {
+                return
+            }
+            Logger.shared.log("Passkeys", "Create passkey failed: \(error.localizedDescription)")
+            guard let component = self.component, let environment = self.environment, let viewController = environment.controller() else {
+                return
+            }
+            let message = "\(error.localizedDescription)\n\nNote: Apple Passkeys require an officially signed build whose Associated Domains match telegram.org. For sideloaded builds, use Keychain Session Backup."
+            let alert = textAlertController(
+                context: component.context,
+                title: environment.strings.Passkeys_Title,
+                text: message,
+                actions: [
+                    TextAlertAction(type: .defaultAction, title: environment.strings.Common_OK, action: {})
+                ]
+            )
+            viewController.present(alert, in: .window(.root))
         }
         
         func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
@@ -122,17 +139,6 @@ final class PasskeysScreenComponent: Component {
                     guard let self, let component = self.component else {
                         return
                     }
-                    // MARK: Swiftgram
-                    if let tgUrl = URL(string: "tg://settings/privacy") {
-                        UIApplication.shared.open(tgUrl, options: [:], completionHandler: { success in
-                            if !success, let tgDLUrl = URL(string: "https://get.telegram.org/") {
-                                    UIApplication.shared.open(tgDLUrl, options: [:], completionHandler: nil)
-                                }
-                            }
-                        )
-                    }
-                    if ({ return true }()) { return }
-                    //
                     let decodeBase64: (String) -> Data? = { string in
                         var string = string.replacingOccurrences(of: "-", with: "+")
                             .replacingOccurrences(of: "_", with: "/")
@@ -151,13 +157,8 @@ final class PasskeysScreenComponent: Component {
                     guard let pkDict = params["publicKey"] as? [String: Any] else {
                         return
                     }
-                    /* MARK: Swiftgram
-                    guard let rp = pkDict["rp"] as? [String: Any] else {
-                        return
-                    }
-                    guard let relyingPartyIdentifier = rp["id"] as? String else {
-                        return
-                    }*/
+                    let rp = pkDict["rp"] as? [String: Any]
+                    let relyingPartyIdentifier = (rp?["id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "telegram.org"
                     guard let challengeBase64 = pkDict["challenge"] as? String else {
                         return
                     }
@@ -177,7 +178,7 @@ final class PasskeysScreenComponent: Component {
                         return
                     }
                     
-                    let platformProvider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: "swiftgram.app")
+                    let platformProvider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: relyingPartyIdentifier)
                     let platformKeyRequest = platformProvider.createCredentialRegistrationRequest(challenge: challengeData, name: userName, userID: userId)
                     let authController = ASAuthorizationController(authorizationRequests: [platformKeyRequest])
                     authController.delegate = self
@@ -238,14 +239,16 @@ final class PasskeysScreenComponent: Component {
                         do {
                             try await updater.reportUnknownPublicKeyCredential(relyingPartyIdentifier: "telegram.org", credentialID: credentialId)
                         } catch let e {
-                            Logger.shared.log("Passkeys", "reportUnknownPublicKeyCredential error: \(e). Retrying with another domain")
-                            // MARK: Swiftgram
-                            do {
-                                try await updater.reportUnknownPublicKeyCredential(relyingPartyIdentifier: "swiftgram.app", credentialID: credentialId)
-                            } catch let e {
-                                Logger.shared.log("Passkeys", "reportUnknownPublicKeyCredential error: \(e)")
+                            Logger.shared.log("Passkeys", "reportUnknownPublicKeyCredential error: \(e)")
+                            if let configuredDomain = Bundle.main.object(forInfoDictionaryKey: "AyuAssociatedDomain") as? String,
+                               !configuredDomain.isEmpty,
+                               configuredDomain != "telegram.org" {
+                                do {
+                                    try await updater.reportUnknownPublicKeyCredential(relyingPartyIdentifier: configuredDomain, credentialID: credentialId)
+                                } catch let nestedError {
+                                    Logger.shared.log("Passkeys", "reportUnknownPublicKeyCredential error (\(configuredDomain)): \(nestedError)")
+                                }
                             }
-                            //
                         }
                     }
                 }

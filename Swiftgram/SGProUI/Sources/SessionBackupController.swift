@@ -36,6 +36,23 @@ import SwiftUI
 import SGSwiftUI
 import LegacyUI
 import SGStrings
+import UniformTypeIdentifiers
+
+private final class SessionBackupDocumentPicker: UIDocumentPickerViewController, UIDocumentPickerDelegate {
+    var picked: ((URL) -> Void)?
+
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        let cb = self.picked
+        self.picked = nil
+        if let url = urls.first {
+            cb?(url)
+        }
+    }
+
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        self.picked = nil
+    }
+}
 
 
 @available(iOS 13.0, *)
@@ -111,6 +128,98 @@ struct SessionBackupManagerView: View {
     @State private var sessions: [SessionBackup] = []
     @State private var loggedInPeerIDs: [Int64] = []
     @State private var loggedInAccountsDisposable: Disposable? = nil
+    @State private var iCloudSyncEnabled: Bool = KeychainBackupManager.shared.iCloudSyncEnabled
+    @State private var requireBiometrics: Bool = KeychainBackupManager.shared.requireBiometricsForRestore
+
+    private func presentPassphraseAlert(
+        title: String,
+        message: String,
+        onConfirm: @escaping (String) -> Void
+    ) {
+        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addTextField { textField in
+            textField.isSecureTextEntry = true
+            textField.placeholder = "Keychain.PassphrasePlaceholder".i18n(lang)
+        }
+        alert.addAction(UIAlertAction(title: presentationData.strings.Common_Cancel, style: .cancel))
+        alert.addAction(UIAlertAction(title: presentationData.strings.Common_OK, style: .default, handler: { [weak alert] _ in
+            let passphrase = alert?.textFields?.first?.text ?? ""
+            if !passphrase.isEmpty {
+                onConfirm(passphrase)
+            }
+        }))
+        wrapperController?.present(alert, animated: true)
+    }
+
+    private func performExportEncrypted() {
+        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+        self.presentPassphraseAlert(
+            title: "Keychain.ExportEncryptedTitle".i18n(lang),
+            message: "Keychain.ExportPassphrasePrompt".i18n(lang),
+            onConfirm: { passphrase in
+                do {
+                    let archiveData = try KeychainBackupManager.shared.exportEncryptedBackup(passphrase: passphrase)
+                    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("ayugram-sessions.ayukey")
+                    try archiveData.write(to: fileURL, options: .atomic)
+                    let activity = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+                    activity.completionWithItemsHandler = { _, _, _, _ in
+                        try? FileManager.default.removeItem(at: fileURL)
+                    }
+                    if let view = wrapperController?.view {
+                        activity.popoverPresentationController?.sourceView = view
+                        activity.popoverPresentationController?.sourceRect = CGRect(origin: CGPoint(x: view.bounds.midX, y: view.bounds.midY), size: CGSize(width: 1.0, height: 1.0))
+                    }
+                    wrapperController?.present(activity, animated: true)
+                } catch {
+                    let errAlert = textAlertController(
+                        context: context,
+                        title: "Keychain.ExportEncryptedTitle".i18n(lang),
+                        text: error.localizedDescription,
+                        actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]
+                    )
+                    wrapperController?.present(errAlert, in: .window(.root), with: nil)
+                }
+            }
+        )
+    }
+
+    private func performImportEncrypted() {
+        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+        let picker = SessionBackupDocumentPicker(forOpeningContentTypes: [.data, .item], asCopy: true)
+        picker.delegate = picker
+        picker.allowsMultipleSelection = false
+        picker.picked = { url in
+            guard let data = try? Data(contentsOf: url) else {
+                return
+            }
+            self.presentPassphraseAlert(
+                title: "Keychain.ImportEncryptedTitle".i18n(lang),
+                message: "Keychain.ImportPassphrasePrompt".i18n(lang),
+                onConfirm: { passphrase in
+                    do {
+                        let imported = try KeychainBackupManager.shared.importEncryptedBackup(data, passphrase: passphrase)
+                        withAnimation {
+                            sessions = getBackedSessions()
+                        }
+                        wrapperController?.present(
+                            okUndoController("Keychain.ImportSuccessCount".i18n(lang, args: "\(imported.count)"), presentationData),
+                            in: .current
+                        )
+                    } catch {
+                        let errAlert = textAlertController(
+                            context: context,
+                            title: "Keychain.ImportEncryptedTitle".i18n(lang),
+                            text: error.localizedDescription,
+                            actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]
+                        )
+                        wrapperController?.present(errAlert, in: .window(.root), with: nil)
+                    }
+                }
+            )
+        }
+        wrapperController?.present(picker, animated: true)
+    }
     
     private func performBackup() {
         let controller = OverlayStatusController(theme: context.sharedContext.currentPresentationData.with { $0 }.theme, type: .loading(cancelled: nil))
@@ -346,6 +455,48 @@ struct SessionBackupManagerView: View {
                 }
                 .foregroundColor(.red)
                 
+            }
+
+            Section(header: Text("Keychain.SecurityAndSyncHeader".i18n(lang))) {
+                Toggle(isOn: $iCloudSyncEnabled) {
+                    HStack {
+                        Image(systemName: "icloud.fill")
+                            .frame(width: 30)
+                        Text("Keychain.iCloudSyncToggle".i18n(lang))
+                    }
+                }
+                .onChange(of: iCloudSyncEnabled) { newValue in
+                    KeychainBackupManager.shared.iCloudSyncEnabled = newValue
+                }
+
+                Toggle(isOn: $requireBiometrics) {
+                    HStack {
+                        Image(systemName: "faceid")
+                            .frame(width: 30)
+                        Text("Keychain.RequireBiometricsToggle".i18n(lang))
+                    }
+                }
+                .onChange(of: requireBiometrics) { newValue in
+                    KeychainBackupManager.shared.requireBiometricsForRestore = newValue
+                }
+
+                Button(action: performExportEncrypted) {
+                    HStack {
+                        Image(systemName: "square.and.arrow.up")
+                            .frame(width: 30)
+                        Text("Keychain.ExportEncryptedTitle".i18n(lang))
+                        Spacer()
+                    }
+                }
+
+                Button(action: performImportEncrypted) {
+                    HStack {
+                        Image(systemName: "square.and.arrow.down")
+                            .frame(width: 30)
+                        Text("Keychain.ImportEncryptedTitle".i18n(lang))
+                        Spacer()
+                    }
+                }
             }
             
             Text("SessionBackup.Notice".i18n(lang))

@@ -1,5 +1,6 @@
 import SGStrings
 import SGSimpleSettings
+import SGPluginBridge
 import Foundation
 import UIKit
 import Postbox
@@ -9439,6 +9440,113 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         return .single(false)
     }
     
+    private func applyPluginSendHooks(to messages: [EnqueueMessage], peerId: PeerId) -> [EnqueueMessage] {
+        guard AyuPluginBridge.shared.hasActivePlugins && !AyuPluginBridge.shared.isSafeModeEnabled else {
+            return messages
+        }
+        AyuPluginBridge.shared.bindAccountContext(self.context)
+        let accountId = self.context.account.peerId.id._internalGetInt64Value()
+        let chatId = peerId.id._internalGetInt64Value()
+
+        return messages.compactMap { entry in
+            guard case let .message(text, attributes, inlineStickers, mediaReference, threadId, replyToMessageId, replyToStoryId, localGroupingKey, correlationId, bubbleUpEmojiOrStickersets) = entry else {
+                return entry
+            }
+
+            var initialEntities: [AyuPluginEntity] = []
+            var silent = self.presentationInterfaceState.interfaceState.silentPosting
+            var noWebpage = false
+            for attribute in attributes {
+                if let entityAttr = attribute as? TextEntitiesMessageAttribute {
+                    for entity in entityAttr.entities {
+                        let offset = entity.range.lowerBound
+                        let length = entity.range.count
+                        switch entity.type {
+                        case .Bold:
+                            initialEntities.append(AyuPluginEntity(type: "bold", offset: offset, length: length))
+                        case .Italic:
+                            initialEntities.append(AyuPluginEntity(type: "italic", offset: offset, length: length))
+                        case .Code:
+                            initialEntities.append(AyuPluginEntity(type: "code", offset: offset, length: length))
+                        case let .Pre(language):
+                            initialEntities.append(AyuPluginEntity(type: "pre", offset: offset, length: length, language: language))
+                        case let .TextUrl(url):
+                            initialEntities.append(AyuPluginEntity(type: "text_url", offset: offset, length: length, url: url))
+                        case .Strikethrough:
+                            initialEntities.append(AyuPluginEntity(type: "strike", offset: offset, length: length))
+                        case .Underline:
+                            initialEntities.append(AyuPluginEntity(type: "underline", offset: offset, length: length))
+                        case .Spoiler:
+                            initialEntities.append(AyuPluginEntity(type: "spoiler", offset: offset, length: length))
+                        case .Mention:
+                            initialEntities.append(AyuPluginEntity(type: "mention", offset: offset, length: length))
+                        case .Hashtag:
+                            initialEntities.append(AyuPluginEntity(type: "hashtag", offset: offset, length: length))
+                        default:
+                            break
+                        }
+                    }
+                } else if attribute is NotificationInfoMessageAttribute {
+                    silent = true
+                } else if let contentAttr = attribute as? OutgoingContentInfoMessageAttribute, contentAttr.flags.contains(.disableLinkPreviews) {
+                    noWebpage = true
+                }
+            }
+
+            let params = AyuSendHookParams(
+                account: accountId,
+                peerId: chatId,
+                message: text,
+                replyToMsgId: replyToMessageId?.messageId.id,
+                silent: silent,
+                noWebpage: noWebpage,
+                entities: initialEntities
+            )
+
+            switch AyuPluginBridge.shared.processOutgoingMessage(params) {
+            case .passThrough:
+                return entry
+            case .cancel:
+                return nil
+            case let .modify(updated):
+                var newAttributes = attributes
+                if updated.message != text || updated.entities != initialEntities {
+                    newAttributes.removeAll(where: { $0 is TextEntitiesMessageAttribute })
+                    let converted = ayuPluginConvertEntities(updated.entities.map {
+                        AyuPluginCoreEntity(type: $0.type, offset: $0.offset, length: $0.length, url: $0.url, language: $0.language)
+                    })
+                    if !converted.isEmpty {
+                        newAttributes.append(TextEntitiesMessageAttribute(entities: converted))
+                    }
+                }
+                if updated.silent != silent {
+                    newAttributes.removeAll(where: { $0 is NotificationInfoMessageAttribute })
+                    if updated.silent {
+                        newAttributes.append(NotificationInfoMessageAttribute(flags: .muted))
+                    }
+                }
+                if updated.noWebpage != noWebpage {
+                    newAttributes.removeAll(where: { $0 is OutgoingContentInfoMessageAttribute })
+                    if updated.noWebpage {
+                        newAttributes.append(OutgoingContentInfoMessageAttribute(flags: [.disableLinkPreviews]))
+                    }
+                }
+                return .message(
+                    text: updated.message,
+                    attributes: newAttributes,
+                    inlineStickers: inlineStickers,
+                    mediaReference: mediaReference,
+                    threadId: threadId,
+                    replyToMessageId: replyToMessageId,
+                    replyToStoryId: replyToStoryId,
+                    localGroupingKey: localGroupingKey,
+                    correlationId: correlationId,
+                    bubbleUpEmojiOrStickersets: bubbleUpEmojiOrStickersets
+                )
+            }
+        }
+    }
+
     func sendMessages(_ messages: [EnqueueMessage], media: Bool = false, postpone: Bool = false, commit: Bool = false, presentSchedulePickerInOverlay: Bool = false) {
         if case let .customChatContents(customChatContents) = self.subject {
             customChatContents.enqueueMessages(messages: messages)
@@ -9446,6 +9554,11 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         }
         
         guard let peerId = self.chatLocation.peerId else {
+            return
+        }
+
+        let messages = self.applyPluginSendHooks(to: messages, peerId: peerId)
+        if messages.isEmpty {
             return
         }
 

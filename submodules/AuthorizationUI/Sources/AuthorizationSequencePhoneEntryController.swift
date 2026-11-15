@@ -13,6 +13,47 @@ import PhoneNumberFormat
 import DebugSettingsUI
 import MessageUI
 import AuthenticationServices
+import Postbox
+import SGKeychainBackupManager
+import SGStrings
+import UniformTypeIdentifiers
+
+private struct RestorableSessionBackup: Codable {
+    var name: String? = nil
+    var date: Date = Date()
+    let accountRecord: AccountRecord<TelegramAccountManagerTypes.Attribute>
+
+    var peerIdInternal: Int64 {
+        var userId: Int64 = 0
+        for attribute in self.accountRecord.attributes {
+            if case let .backupData(backupData) = attribute, let backupPeerId = backupData.data?.peerId {
+                userId = backupPeerId
+                break
+            }
+        }
+        return userId
+    }
+
+    var userId: Int64 {
+        return PeerId(self.peerIdInternal).id._internalGetInt64Value()
+    }
+}
+
+private final class AuthBackupDocumentPicker: UIDocumentPickerViewController, UIDocumentPickerDelegate {
+    var picked: ((URL) -> Void)?
+
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        let cb = self.picked
+        self.picked = nil
+        if let url = urls.first {
+            cb?(url)
+        }
+    }
+
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        self.picked = nil
+    }
+}
 
 public final class AuthorizationSequencePhoneEntryController: ViewController, MFMailComposeViewControllerDelegate, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
     private var controllerNode: AuthorizationSequencePhoneEntryControllerNode {
@@ -63,6 +104,7 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
     private let termsDisposable = MetaDisposable()
     
     private let hapticFeedback = HapticFeedback()
+    private var isManualPasskeyAttempt = false
     
     public init(sharedContext: SharedAccountContext, account: UnauthorizedAccount?, countriesConfiguration: CountriesConfiguration? = nil, apiId: Int32, apiHash: String, isTestingEnvironment: Bool, otherAccountPhoneNumbers: ((String, AccountRecordId, Bool)?, [(String, AccountRecordId, Bool)]), network: Network, presentationData: PresentationData, openUrl: @escaping (String) -> Void, back: @escaping () -> Void) {
         self.sharedContext = sharedContext
@@ -163,6 +205,13 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
             }
             self.loadAndPresentPasskey(force: true)
         }
+        self.controllerNode.loginWithSavedAccount = { [weak self] in
+            guard let self else {
+                return
+            }
+            self.presentSavedAccountsLogin()
+        }
+        self.refreshSavedAccountsCount()
         
         if let (code, name, number) = self.currentData {
             self.controllerNode.codeAndNumber = (code, name, number)
@@ -205,6 +254,7 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
     
     private func loadAndPresentPasskey(force: Bool) {
         if #available(iOS 16.0, *) {
+            self.isManualPasskeyAttempt = force
             Task { @MainActor [weak self] in
                 guard let self, let account = self.account else {
                     return
@@ -222,26 +272,28 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
                 let engine = TelegramEngineUnauthorized(account: account)
                 let passkeyDataString = await engine.auth.requestPasskeyLoginData(apiId: self.apiId, apiHash: self.apiHash).get()
                 guard let passkeyDataString, let passkeyData = passkeyDataString.data(using: .utf8) else {
+                    self.isManualPasskeyAttempt = false
                     return
                 }
                 guard let params = try? JSONSerialization.jsonObject(with: passkeyData) as? [String: Any] else {
+                    self.isManualPasskeyAttempt = false
                     return
                 }
                 guard let pkDict = params["publicKey"] as? [String: Any] else {
+                    self.isManualPasskeyAttempt = false
                     return
                 }
-                /* MARK: Swiftgram
-                guard let relyingPartyIdentifier = pkDict["rpId"] as? String else {
-                    return
-                }*/
+                let relyingPartyIdentifier = (pkDict["rpId"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "telegram.org"
                 guard let challengeBase64 = pkDict["challenge"] as? String else {
+                    self.isManualPasskeyAttempt = false
                     return
                 }
                 guard let challengeData = decodeBase64(challengeBase64) else {
+                    self.isManualPasskeyAttempt = false
                     return
                 }
                 
-                let platformProvider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: "swiftgram.app")
+                let platformProvider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: relyingPartyIdentifier)
                 let platformKeyRequest = platformProvider.createCredentialAssertionRequest(challenge: challengeData)
                 let authController = ASAuthorizationController(authorizationRequests: [platformKeyRequest])
                 authController.delegate = self
@@ -256,6 +308,7 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
     }
     
     public func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
+        self.isManualPasskeyAttempt = false
         Task { @MainActor [weak self] in
             guard let self, let account = self.account else {
                 return
@@ -305,11 +358,37 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
     }
 
     public func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: any Error) {
-        if (error as NSError).domain == "com.apple.AuthenticationServices.AuthorizationError" && (error as NSError).code == 1001 {
-            self.controllerNode.updateDisplayPasskeyLoginOption()
-            if let validLayout = self.validLayout {
-                self.containerLayoutUpdated(validLayout, transition: .immediate)
-            }
+        let wasManualAttempt = self.isManualPasskeyAttempt
+        self.isManualPasskeyAttempt = false
+
+        let nsError = error as NSError
+        self.controllerNode.updateDisplayPasskeyLoginOption()
+        if let validLayout = self.validLayout {
+            self.containerLayoutUpdated(validLayout, transition: .immediate)
+        }
+
+        if nsError.domain == ASAuthorizationError.errorDomain && nsError.code == ASAuthorizationError.canceled.rawValue {
+            return
+        }
+
+        if wasManualAttempt {
+            let locale = self.presentationData.strings.baseLanguageCode
+            let message = "Keychain.PasskeyFallbackMessage".i18n(locale, args: error.localizedDescription)
+            let alert = textAlertController(
+                sharedContext: self.sharedContext,
+                title: self.presentationData.strings.Passkeys_Title,
+                text: message,
+                actions: [
+                    TextAlertAction(type: .defaultAction, title: "Keychain.SavedAccountsAction".i18n(locale), action: { [weak self] in
+                        self?.presentSavedAccountsLogin()
+                    }),
+                    TextAlertAction(type: .genericAction, title: "Keychain.RetryPasskey".i18n(locale), action: { [weak self] in
+                        self?.loadAndPresentPasskey(force: true)
+                    }),
+                    TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {})
+                ]
+            )
+            self.present(alert, in: .window(.root))
         }
     }
     
@@ -347,6 +426,7 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
         if !self.animatingIn {
             self.controllerNode.activateInput()
         }
+        self.refreshSavedAccountsCount()
     }
     
     override public func viewWillDisappear(_ animated: Bool) {
@@ -442,5 +522,185 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
     
     public func mailComposeController(_ controller: MFMailComposeViewController, didFinishWith result: MFMailComposeResult, error: Error?) {
         controller.dismiss(animated: true, completion: nil)
+    }
+
+    // MARK: - Keychain / Face ID Saved Account Login & Encrypted Import
+
+    private func loadRestorableBackups() -> [RestorableSessionBackup] {
+        guard let entries = try? KeychainBackupManager.shared.getAllSessons() else {
+            return []
+        }
+        let decoder = JSONDecoder()
+        return entries
+            .compactMap { try? decoder.decode(RestorableSessionBackup.self, from: $0) }
+            .filter { $0.peerIdInternal != 0 }
+            .sorted { $0.date > $1.date }
+    }
+
+    private func refreshSavedAccountsCount() {
+        let count = self.loadRestorableBackups().count
+        if self.isNodeLoaded {
+            self.controllerNode.updateSavedAccountsCount(count)
+            if let validLayout = self.validLayout {
+                self.containerLayoutUpdated(validLayout, transition: .immediate)
+            }
+        }
+    }
+
+    private func presentSavedAccountsLogin() {
+        self.view.endEditing(true)
+        let locale = self.presentationData.strings.baseLanguageCode
+        let backups = self.loadRestorableBackups()
+
+        let sheet = ActionSheetController(presentationData: self.presentationData)
+        var items: [ActionSheetItem] = []
+
+        if !backups.isEmpty {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .short
+            formatter.timeStyle = .short
+            for backup in backups {
+                let displayName = backup.name ?? "ID \(backup.userId)"
+                let title = "\(displayName) (\(formatter.string(from: backup.date)))"
+                items.append(ActionSheetButtonItem(title: title, color: .accent, action: { [weak self, weak sheet] in
+                    sheet?.dismissAnimated()
+                    self?.restoreKeychainBackup(backup)
+                }))
+            }
+        }
+
+        items.append(ActionSheetButtonItem(title: "Keychain.ImportEncryptedFile".i18n(locale), color: .accent, action: { [weak self, weak sheet] in
+            sheet?.dismissAnimated()
+            self?.presentEncryptedBackupPicker()
+        }))
+
+        sheet.setItemGroups([
+            ActionSheetItemGroup(items: items),
+            ActionSheetItemGroup(items: [
+                ActionSheetButtonItem(title: self.presentationData.strings.Common_Cancel, color: .accent, font: .bold, action: { [weak sheet] in
+                    sheet?.dismissAnimated()
+                })
+            ])
+        ])
+        self.present(sheet, in: .window(.root))
+    }
+
+    private func restoreKeychainBackup(_ backup: RestorableSessionBackup) {
+        let locale = self.presentationData.strings.baseLanguageCode
+        let reason = "Keychain.FaceIDReason".i18n(locale, args: backup.name ?? "ID \(backup.userId)")
+
+        KeychainBackupManager.shared.authenticateWithBiometrics(reason: reason) { [weak self] authResult in
+            guard let self else {
+                return
+            }
+            switch authResult {
+            case let .failure(error):
+                let alert = textAlertController(
+                    sharedContext: self.sharedContext,
+                    title: "Keychain.SavedAccountsTitle".i18n(locale),
+                    text: error.localizedDescription,
+                    actions: [
+                        TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})
+                    ]
+                )
+                self.present(alert, in: .window(.root))
+            case .success:
+                var importAttributes = backup.accountRecord.attributes
+                importAttributes.removeAll { attribute in
+                    if case .sortOrder = attribute {
+                        return true
+                    }
+                    return false
+                }
+
+                let targetPeerId = backup.peerIdInternal
+                let sharedContext = self.sharedContext
+                let signal = sharedContext.accountManager.transaction { transaction -> AccountRecordId in
+                    let records = transaction.getRecords()
+                    let existing = records.first { record in
+                        var recordPeerId: Int64 = 0
+                        for attribute in record.attributes {
+                            if case let .backupData(backupData) = attribute {
+                                recordPeerId = backupData.data?.peerId ?? 0
+                            }
+                        }
+                        return recordPeerId == targetPeerId
+                    }
+
+                    let nextSortOrder = (records.map({ record -> Int32 in
+                        for attribute in record.attributes {
+                            if case let .sortOrder(sortOrder) = attribute {
+                                return sortOrder.order
+                            }
+                        }
+                        return 0
+                    }).max() ?? 0) + 1
+                    importAttributes.append(.sortOrder(AccountSortOrderAttribute(order: nextSortOrder)))
+
+                    let targetRecordId: AccountRecordId
+                    if let existing {
+                        targetRecordId = existing.id
+                        transaction.updateRecord(targetRecordId, { _ in
+                            return AccountRecord(id: targetRecordId, attributes: importAttributes, temporarySessionId: nil)
+                        })
+                    } else {
+                        targetRecordId = transaction.createRecord(importAttributes)
+                    }
+                    transaction.setCurrentId(targetRecordId)
+                    transaction.removeAuth()
+                    return targetRecordId
+                }
+                |> deliverOnMainQueue
+
+                let _ = signal.startStandalone()
+            }
+        }
+    }
+
+    private func presentEncryptedBackupPicker() {
+        let picker = AuthBackupDocumentPicker(forOpeningContentTypes: [.data, .item], asCopy: true)
+        picker.delegate = picker
+        picker.allowsMultipleSelection = false
+        picker.picked = { [weak self] url in
+            guard let self, let data = try? Data(contentsOf: url) else {
+                return
+            }
+            self.promptEncryptedBackupPassphrase(for: data)
+        }
+        self.present(picker, animated: true)
+    }
+
+    private func promptEncryptedBackupPassphrase(for data: Data) {
+        let locale = self.presentationData.strings.baseLanguageCode
+        let alert = UIAlertController(
+            title: "Keychain.ImportEncryptedTitle".i18n(locale),
+            message: "Keychain.ImportPassphrasePrompt".i18n(locale),
+            preferredStyle: .alert
+        )
+        alert.addTextField { textField in
+            textField.isSecureTextEntry = true
+            textField.placeholder = "Keychain.PassphrasePlaceholder".i18n(locale)
+        }
+        alert.addAction(UIAlertAction(title: self.presentationData.strings.Common_Cancel, style: .cancel))
+        alert.addAction(UIAlertAction(title: self.presentationData.strings.Common_OK, style: .default, handler: { [weak self, weak alert] _ in
+            guard let self else {
+                return
+            }
+            let passphrase = alert?.textFields?.first?.text ?? ""
+            do {
+                _ = try KeychainBackupManager.shared.importEncryptedBackup(data, passphrase: passphrase)
+                self.refreshSavedAccountsCount()
+                self.presentSavedAccountsLogin()
+            } catch {
+                let errAlert = textAlertController(
+                    sharedContext: self.sharedContext,
+                    title: "Keychain.ImportEncryptedTitle".i18n(locale),
+                    text: error.localizedDescription,
+                    actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]
+                )
+                self.present(errAlert, in: .window(.root))
+            }
+        }))
+        self.present(alert, animated: true)
     }
 }

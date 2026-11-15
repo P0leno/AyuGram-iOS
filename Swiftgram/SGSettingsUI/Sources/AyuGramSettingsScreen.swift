@@ -8,6 +8,8 @@ import TelegramPresentationData
 import PresentationDataUtils
 import ItemListUI
 import SGItemListUI
+import SGPluginBridge
+import SGProUI
 import SGSimpleSettings
 import SGStrings
 
@@ -24,7 +26,7 @@ private enum AyuScreenToggle: Equatable {
 }
 
 private enum AyuScreenLink: Equatable {
-    case history, appearance, channel, developer, importChat, silentSending, sessionLog
+    case history, appearance, plugins, branding, keychainBackup, channel, developer, importChat, silentSending, sessionLog
 }
 
 private enum AyuScreenTint: Equatable {
@@ -122,7 +124,7 @@ private func ayuScreenEntries(data: PresentationData, privacy: AyuGramPrivacySet
     let ghost = privacy.ghostMode
     var entries: [AyuScreenEntry] = []
 
-    entries.append(.hero(id: 0, title: "AyuGram", status: s(ghost ? "Ayu.HeroGhostOn" : "Ayu.HeroGhostOff"), detail: i18n("Ayu.HeroHidden", locale, "\(hiddenCount)", "\(hidden.count)"), active: ghost || hiddenCount > 0))
+    entries.append(.hero(id: 0, title: AyuGramBrandingConfig.shared.effectiveAppTitle, status: s(ghost ? "Ayu.HeroGhostOn" : "Ayu.HeroGhostOff"), detail: i18n("Ayu.HeroHidden", locale, "\(hiddenCount)", "\(hidden.count)"), active: ghost || hiddenCount > 0))
 
     entries.append(.header(id: 100, section: .ghost, text: s("Ayu.Ghost")))
     entries.append(.toggle(id: 110, section: .ghost, key: .ghost, symbol: "eye.slash.fill", tint: .purple, title: s("Ayu.Ghost"), subtitle: s("Ayu.GhostSubtitle"), value: ghost, enabled: true))
@@ -174,6 +176,11 @@ private func ayuScreenEntries(data: PresentationData, privacy: AyuGramPrivacySet
     if hasAppearance {
         entries.append(.link(id: 620, section: .client, link: .appearance, symbol: "paintbrush.fill", tint: .pink, title: data.strings.Appearance_Title, label: ""))
     }
+    let activePluginCount = AyuPluginBridge.shared.activePluginCount
+    let pluginsLabel = activePluginCount > 0 ? "\(activePluginCount)" : ""
+    entries.append(.link(id: 630, section: .client, link: .plugins, symbol: "puzzlepiece.extension.fill", tint: .indigo, title: s("Ayu.Plugins.Title"), label: pluginsLabel))
+    entries.append(.link(id: 635, section: .client, link: .branding, symbol: "app.badge.fill", tint: .orange, title: s("Ayu.Branding.Title"), label: AyuGramBrandingConfig.shared.effectiveAppTitle))
+    entries.append(.link(id: 640, section: .client, link: .keychainBackup, symbol: "person.badge.key.fill", tint: .teal, title: "SessionBackup.Title".i18n(locale), label: ""))
     entries.append(.footer(id: 650, section: .client, text: s("Ayu.LocalOnly")))
 
     entries.append(.header(id: 700, section: .support, text: s("Ayu.SupportSection")))
@@ -193,8 +200,12 @@ public func ayuGramSettingsScreen(context: AccountContext) -> ViewController {
         let observer = NotificationCenter.default.addObserver(forName: AyuGramSettings.didChange, object: nil, queue: .main) { _ in
             subscriber.putNext(0)
         }
+        let brandingObserver = NotificationCenter.default.addObserver(forName: AyuGramBrandingConfig.didChange, object: nil, queue: .main) { _ in
+            subscriber.putNext(0)
+        }
         return ActionDisposable {
             NotificationCenter.default.removeObserver(observer)
+            NotificationCenter.default.removeObserver(brandingObserver)
         }
     }
     let arguments = AyuScreenArguments(toggle: { key, value in
@@ -231,6 +242,18 @@ public func ayuGramSettingsScreen(context: AccountContext) -> ViewController {
         case .appearance:
             if let controller = ayuGramAppearanceEntryController(context: context) {
                 pushController?(controller)
+            }
+        case .plugins:
+            AyuPluginBridge.shared.bindAccountContext(context)
+            if let controller = AyuPluginBridge.shared.makePluginsController(context: context) as? ViewController {
+                pushController?(controller)
+            }
+        case .branding:
+            pushController?(ayuGramBrandingController(context: context))
+        case .keychainBackup:
+            if #available(iOS 13.0, *) {
+                let data = context.sharedContext.currentPresentationData.with { $0 }
+                pushController?(sgSessionBackupManagerController(context: context, presentationData: data))
             }
         case .channel:
             ayuGramOpenLink(context: context, url: AyuGramUpdates.channelURL)
@@ -276,7 +299,7 @@ public func ayuGramSettingsScreen(context: AccountContext) -> ViewController {
     |> map { data, _ -> (ItemListControllerState, (ItemListNodeState, AyuScreenArguments)) in
         let settings = AyuGramSettings.shared
         let entries = ayuScreenEntries(data: data, privacy: settings.snapshot, extra: settings.extra, client: settings.client, hasAppearance: hasAppearance)
-        let state = ItemListControllerState(presentationData: ItemListPresentationData(data), title: .text("AyuGram"), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: data.strings.Common_Back))
+        let state = ItemListControllerState(presentationData: ItemListPresentationData(data), title: .text(AyuGramBrandingConfig.shared.effectiveAppTitle), leftNavigationButton: nil, rightNavigationButton: nil, backNavigationButton: ItemListBackButton(title: data.strings.Common_Back))
         let listState = ItemListNodeState(presentationData: ItemListPresentationData(data), entries: entries, style: .blocks, animateChanges: true)
         return (state, (listState, arguments))
     }

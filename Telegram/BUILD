@@ -64,6 +64,7 @@ load(
     "telegram_team_id",
     "telegram_enable_icloud",
     "telegram_enable_siri",
+    "telegram_associated_domains",
 )
 
 load("@build_bazel_rules_apple//apple:resources.bzl",
@@ -389,7 +390,14 @@ objc_library(
     ],
 )
 
-SGRESOURCES = ["//Swiftgram/SGSettingsUI:SGUIAssets", "//Swiftgram/SGPayWall:SGPayWallAssets", "//Swiftgram/SGAppBadgeAssets:SGAppBadgeAssets", "//Swiftgram/SGNY:SGNYAssets"]
+SGRESOURCES = [
+    "//Swiftgram/SGSettingsUI:SGUIAssets",
+    "//Swiftgram/SGPayWall:SGPayWallAssets",
+    "//Swiftgram/SGAppBadgeAssets:SGAppBadgeAssets",
+    "//Swiftgram/SGNY:SGNYAssets",
+    "//Swiftgram/AyuBranding:AyuBrandingResources",
+    "//Swiftgram/SGPlugins:SGPluginsResources",
+]
 
 swift_library(
     name = "Lib",
@@ -417,6 +425,8 @@ swift_library(
     deps = [
         "//submodules/TelegramUI:TelegramUI",
         "//third-party/boringssl:crypto",
+        "//Swiftgram/SGPluginBridge:SGPluginBridge",
+        "//Swiftgram/SGPlugins:SGPlugins",
     ],
 )
 
@@ -552,18 +562,21 @@ icloud_fragment = "" if not telegram_enable_icloud else """
     telegram_icloud_environment="Production" if telegram_aps_environment == "production" else "Development"
 )
 
-associated_domains_fragment = "" if telegram_bundle_id not in official_bundle_ids else """
+effective_associated_domains = telegram_associated_domains if telegram_associated_domains else (
+    ["telegram.me", "t.me", "*.t.me", "telegram.org"] if telegram_bundle_id in official_bundle_ids else []
+)
+
+associated_domain_entries = []
+for _dom in effective_associated_domains:
+    associated_domain_entries.append("    <string>applinks:{}</string>".format(_dom))
+    associated_domain_entries.append("    <string>webcredentials:{}</string>".format(_dom))
+
+associated_domains_fragment = "" if not associated_domain_entries else """
 <key>com.apple.developer.associated-domains</key>
 <array>
-    <string>applinks:telegram.me</string>
-    <string>applinks:t.me</string>
-    <string>applinks:*.t.me</string>
-    <string>applinks:swiftgram.app</string>
-    <string>webcredentials:swiftgram.app</string>
-    <string>webcredentials:t.me</string>
-    <string>webcredentials:telegram.org</string>
+{}
 </array>
-"""
+""".format("\n".join(associated_domain_entries))
 
 siri_fragment = "" if not telegram_enable_siri else """
 <key>com.apple.developer.siri</key>
@@ -2029,6 +2042,23 @@ plist_fragment(
     <false/>
     <key>UIViewGroupOpacity</key>
     <false/>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeIconFiles</key>
+            <array/>
+            <key>CFBundleTypeName</key>
+            <string>AyuGram Plugin</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>one.ayugram.plugin</string>
+            </array>
+        </dict>
+    </array>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <false/>
     <key>UTImportedTypeDeclarations</key>
     <array>
         <dict>
@@ -2049,6 +2079,25 @@ plist_fragment(
                 <key>public.filename-extension</key>
                 <array>
                     <string>tgios-theme</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.python-script</string>
+                <string>public.plain-text</string>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeDescription</key>
+            <string>AyuGram Plugin Script</string>
+            <key>UTTypeIdentifier</key>
+            <string>one.ayugram.plugin</string>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>plugin</string>
                 </array>
             </dict>
         </dict>

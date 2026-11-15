@@ -2,6 +2,7 @@ import Foundation
 import MediaPlayer
 import AVFAudio
 import SGSimpleSettings
+import SGPluginBridge
 import Display
 import AsyncDisplayKit
 import TelegramCore
@@ -237,6 +238,18 @@ func openChatMessageImpl(_ params: OpenChatMessageParams) -> Bool {
                 if immediateShare {
                     let controller = params.context.sharedContext.makeShareScreen(context: params.context, params: ShareControllerParams(subject: .media(.standalone(media: file), nil), immediateExternalShare: true))
                     params.present(controller, nil, .window(.root))
+                } else if let fileName = file.fileName,
+                          (fileName as NSString).pathExtension.lowercased() == "plugin",
+                          let path = params.context.engine.resources.completedResourcePath(id: EngineMediaResource.Id(file.resource.id)) {
+                    let stagedURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+                    try? FileManager.default.removeItem(at: stagedURL)
+                    if (try? FileManager.default.copyItem(atPath: path, toPath: stagedURL.path)) != nil {
+                        AyuPluginBridge.shared.bindAccountContext(params.context)
+                        AyuPluginBridge.shared.startIfNeeded()
+                        AyuPluginBridge.shared.installPlugin(fromFileURL: stagedURL, presentationContext: params.navigationController)
+                        return true
+                    }
+                    return false
                 } else if let rootController = params.navigationController?.view.window?.rootViewController {
                     let proceed = {
                         let canShare = !params.message.isCopyProtected() && !params.copyProtected
