@@ -1,6 +1,7 @@
 // MARK: Swiftgram
 import SGIAP
 import SGPayWall
+import SGPluginBridge
 import SGProUI
 import SGSimpleSettings
 //
@@ -360,6 +361,21 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         self.notificationController = notificationController
         self.hasInAppPurchases = hasInAppPurchases
         self.testingEnvironment = testingEnvironment
+
+        AyuPluginBridge.shared.registerProScreenFactories(
+            sessionBackup: { contextObj, presentationDataObj in
+                guard let context = contextObj as? AccountContext else {
+                    return nil
+                }
+                return sgSessionBackupManagerController(context: context, presentationData: presentationDataObj as? PresentationData)
+            },
+            appBadgeSettings: { contextObj in
+                guard let context = contextObj as? AccountContext else {
+                    return nil
+                }
+                return sgAppBadgeSettingsController(context: context)
+            }
+        )
 
         self.accountManager.mediaBox.fetchCachedResourceRepresentation = { (resource, representation) -> Signal<EngineCachedMediaResourceRepresentationResult, NoError> in
             return fetchCachedSharedResourceRepresentation(accountManager: accountManager, resource: resource, representation: representation)

@@ -111,7 +111,7 @@ class TestPythonBundlePreparation(unittest.TestCase):
             fw_dir = Path(tmp)
             calls = []
 
-            def fake_run(cmd, check=False):
+            def fake_run(cmd, check=False, **kwargs):
                 calls.append((cmd, check))
 
             with mock.patch.object(ayugram_python.subprocess, "run", side_effect=fake_run):
@@ -122,10 +122,13 @@ class TestPythonBundlePreparation(unittest.TestCase):
                     frameworks_dir=fw_dir,
                     origin_fwork_relpath="python/lib/python3.13/lib-dynload/_ssl.cpython-313-iphoneos.fwork",
                     install_name_tool_path="/usr/bin/install_name_tool",
+                    codesign_path="/usr/bin/codesign",
                 )
 
-            self.assertEqual(len(calls), 1)
-            cmd, check = calls[0]
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[0][0][:2], ["/usr/bin/codesign", "--remove-signature"])
+            self.assertFalse(calls[0][1])
+            cmd, check = calls[1]
             self.assertTrue(check)
             self.assertEqual(cmd[0:3], ["/usr/bin/install_name_tool", "-id", "@rpath/PyExt__ssl.framework/PyExt__ssl"])
 

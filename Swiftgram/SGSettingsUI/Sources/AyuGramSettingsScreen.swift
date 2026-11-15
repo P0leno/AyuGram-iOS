@@ -9,7 +9,6 @@ import PresentationDataUtils
 import ItemListUI
 import SGItemListUI
 import SGPluginBridge
-import SGProUI
 import SGSimpleSettings
 import SGStrings
 
@@ -251,9 +250,9 @@ public func ayuGramSettingsScreen(context: AccountContext) -> ViewController {
         case .branding:
             pushController?(ayuGramBrandingController(context: context))
         case .keychainBackup:
-            if #available(iOS 13.0, *) {
-                let data = context.sharedContext.currentPresentationData.with { $0 }
-                pushController?(sgSessionBackupManagerController(context: context, presentationData: data))
+            let data = context.sharedContext.currentPresentationData.with { $0 }
+            if let controller = AyuPluginBridge.shared.makeSessionBackupController(context: context, presentationData: data) as? ViewController {
+                pushController?(controller)
             }
         case .channel:
             ayuGramOpenLink(context: context, url: AyuGramUpdates.channelURL)

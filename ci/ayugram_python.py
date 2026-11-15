@@ -199,6 +199,12 @@ def _resolve_install_name_tool() -> str | None:
     return shutil.which("install_name_tool")
 
 
+def _resolve_codesign() -> str | None:
+    if sys.platform != "darwin":
+        return None
+    return shutil.which("codesign")
+
+
 def _safe_tar_member_path(base_dir: Path, rel_path: str) -> Path:
     resolved_base = base_dir.resolve()
     target = (resolved_base / rel_path).resolve()
@@ -308,6 +314,7 @@ def _build_framework_bundle(
     frameworks_dir: Path,
     origin_fwork_relpath: str,
     install_name_tool_path: str | None,
+    codesign_path: str | None = None,
 ) -> Path:
     """Create a dynamic framework wrapper around a CPython .so extension for iOS dlopen."""
     fw_name = _framework_name_for_module(module_name)
@@ -316,6 +323,15 @@ def _build_framework_bundle(
 
     bin_path = fw_dir / fw_name
     _write_file_bytes(bin_path, so_bytes, executable=True)
+
+    if codesign_path and install_name_tool_path:
+        # Simulator prebuilt slices carry an ad-hoc signature; strip it before rewriting install name.
+        subprocess.run(
+            [codesign_path, "--remove-signature", str(bin_path)],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
     if install_name_tool_path:
         subprocess.run(
@@ -358,6 +374,7 @@ def _process_dynload_extensions(
 ) -> list[str]:
     """Extract kept C extension modules into per-slice Frameworks and write .fwork placeholders."""
     install_name_tool_path = _resolve_install_name_tool()
+    codesign_path = _resolve_codesign()
     discovered_modules: set[str] = set()
 
     for arch_key, lib_subpath, platform_tag, platform_family in SLICE_SOURCES:
@@ -390,6 +407,7 @@ def _process_dynload_extensions(
                 frameworks_dir=frameworks_dir,
                 origin_fwork_relpath=fwork_relpath,
                 install_name_tool_path=install_name_tool_path,
+                codesign_path=codesign_path,
             )
 
             fwork_path = lib_dynload_dir / fwork_filename

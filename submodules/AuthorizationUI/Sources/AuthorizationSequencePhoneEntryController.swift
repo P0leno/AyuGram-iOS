@@ -13,31 +13,9 @@ import PhoneNumberFormat
 import DebugSettingsUI
 import MessageUI
 import AuthenticationServices
-import Postbox
 import SGKeychainBackupManager
 import SGStrings
 import UniformTypeIdentifiers
-
-private struct RestorableSessionBackup: Codable {
-    var name: String? = nil
-    var date: Date = Date()
-    let accountRecord: AccountRecord<TelegramAccountManagerTypes.Attribute>
-
-    var peerIdInternal: Int64 {
-        var userId: Int64 = 0
-        for attribute in self.accountRecord.attributes {
-            if case let .backupData(backupData) = attribute, let backupPeerId = backupData.data?.peerId {
-                userId = backupPeerId
-                break
-            }
-        }
-        return userId
-    }
-
-    var userId: Int64 {
-        return PeerId(self.peerIdInternal).id._internalGetInt64Value()
-    }
-}
 
 private final class AuthBackupDocumentPicker: UIDocumentPickerViewController, UIDocumentPickerDelegate {
     var picked: ((URL) -> Void)?
@@ -526,15 +504,11 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
 
     // MARK: - Keychain / Face ID Saved Account Login & Encrypted Import
 
-    private func loadRestorableBackups() -> [RestorableSessionBackup] {
+    private func loadRestorableBackups() -> [AyuRestorableKeychainSession] {
         guard let entries = try? KeychainBackupManager.shared.getAllSessons() else {
             return []
         }
-        let decoder = JSONDecoder()
-        return entries
-            .compactMap { try? decoder.decode(RestorableSessionBackup.self, from: $0) }
-            .filter { $0.peerIdInternal != 0 }
-            .sorted { $0.date > $1.date }
+        return ayuParseRestorableKeychainSessions(from: entries)
     }
 
     private func refreshSavedAccountsCount() {
@@ -585,7 +559,7 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
         self.present(sheet, in: .window(.root))
     }
 
-    private func restoreKeychainBackup(_ backup: RestorableSessionBackup) {
+    private func restoreKeychainBackup(_ backup: AyuRestorableKeychainSession) {
         let locale = self.presentationData.strings.baseLanguageCode
         let reason = "Keychain.FaceIDReason".i18n(locale, args: backup.name ?? "ID \(backup.userId)")
 
@@ -605,51 +579,7 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
                 )
                 self.present(alert, in: .window(.root))
             case .success:
-                var importAttributes = backup.accountRecord.attributes
-                importAttributes.removeAll { attribute in
-                    if case .sortOrder = attribute {
-                        return true
-                    }
-                    return false
-                }
-
-                let targetPeerId = backup.peerIdInternal
-                let sharedContext = self.sharedContext
-                let signal = sharedContext.accountManager.transaction { transaction -> AccountRecordId in
-                    let records = transaction.getRecords()
-                    let existing = records.first { record in
-                        var recordPeerId: Int64 = 0
-                        for attribute in record.attributes {
-                            if case let .backupData(backupData) = attribute {
-                                recordPeerId = backupData.data?.peerId ?? 0
-                            }
-                        }
-                        return recordPeerId == targetPeerId
-                    }
-
-                    let nextSortOrder = (records.map({ record -> Int32 in
-                        for attribute in record.attributes {
-                            if case let .sortOrder(sortOrder) = attribute {
-                                return sortOrder.order
-                            }
-                        }
-                        return 0
-                    }).max() ?? 0) + 1
-                    importAttributes.append(.sortOrder(AccountSortOrderAttribute(order: nextSortOrder)))
-
-                    let targetRecordId: AccountRecordId
-                    if let existing {
-                        targetRecordId = existing.id
-                        transaction.updateRecord(targetRecordId, { _ in
-                            return AccountRecord(id: targetRecordId, attributes: importAttributes, temporarySessionId: nil)
-                        })
-                    } else {
-                        targetRecordId = transaction.createRecord(importAttributes)
-                    }
-                    transaction.setCurrentId(targetRecordId)
-                    transaction.removeAuth()
-                    return targetRecordId
-                }
+                let signal = ayuRestoreKeychainSession(rawData: backup.rawData, accountManager: self.sharedContext.accountManager)
                 |> deliverOnMainQueue
 
                 let _ = signal.startStandalone()

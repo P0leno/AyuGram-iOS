@@ -397,6 +397,8 @@ SGRESOURCES = [
     "//Swiftgram/SGNY:SGNYAssets",
     "//Swiftgram/AyuBranding:AyuBrandingResources",
     "//Swiftgram/SGPlugins:SGPluginsResources",
+    "//third-party/cpython:PythonStdlibResources",
+    "//third-party/cpython:PythonExtResources",
 ]
 
 swift_library(

@@ -96,12 +96,24 @@ public final class AyuPluginBridge {
 
     private let lock = NSLock()
     private var host: AyuPluginHost?
+    private var sessionBackupFactory: ((AnyObject, Any?) -> AnyObject?)?
+    private var appBadgeSettingsFactory: ((AnyObject) -> AnyObject?)?
 
     private init() {}
 
     public func registerHost(_ host: AyuPluginHost) {
         self.lock.lock()
         self.host = host
+        self.lock.unlock()
+    }
+
+    public func registerProScreenFactories(
+        sessionBackup: @escaping (AnyObject, Any?) -> AnyObject?,
+        appBadgeSettings: @escaping (AnyObject) -> AnyObject?
+    ) {
+        self.lock.lock()
+        self.sessionBackupFactory = sessionBackup
+        self.appBadgeSettingsFactory = appBadgeSettings
         self.lock.unlock()
     }
 
@@ -157,5 +169,19 @@ public final class AyuPluginBridge {
 
     public func makePluginsController(context: AnyObject) -> AnyObject? {
         return self.currentHost()?.makePluginsController(context: context)
+    }
+
+    public func makeSessionBackupController(context: AnyObject, presentationData: Any? = nil) -> AnyObject? {
+        self.lock.lock()
+        let factory = self.sessionBackupFactory
+        self.lock.unlock()
+        return factory?(context, presentationData)
+    }
+
+    public func makeAppBadgeSettingsController(context: AnyObject) -> AnyObject? {
+        self.lock.lock()
+        let factory = self.appBadgeSettingsFactory
+        self.lock.unlock()
+        return factory?(context)
     }
 }

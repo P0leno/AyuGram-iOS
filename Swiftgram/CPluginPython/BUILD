@@ -13,10 +13,6 @@ objc_library(
     includes = [
         "PublicHeaders",
     ],
-    data = [
-        "//third-party/cpython:PythonStdlibResources",
-        "//third-party/cpython:PythonExtResources",
-    ],
     sdk_frameworks = [
         "Foundation",
     ],

@@ -8,7 +8,7 @@ import PresentationDataUtils
 import ItemListUI
 import SGSimpleSettings
 import SGStrings
-import SGProUI
+import SGPluginBridge
 
 private enum AyuBrandingSection: Int32 {
     case appName
@@ -315,8 +315,7 @@ public func ayuGramBrandingController(context: AccountContext) -> ViewController
             triggerRefresh()
         },
         openBadgeSelector: {
-            if #available(iOS 14.0, *) {
-                let badgeController = sgAppBadgeSettingsController(context: context)
+            if let badgeController = AyuPluginBridge.shared.makeAppBadgeSettingsController(context: context) as? ViewController {
                 (weakController?.navigationController as? NavigationController)?.pushViewController(badgeController)
             }
         },
@@ -391,7 +390,8 @@ public func ayuGramBrandingController(context: AccountContext) -> ViewController
         let locale = data.strings.baseLanguageCode
         let config = AyuGramBrandingConfig.shared
         let selectedIcon = AyuGramIconSettings.selectedName ?? config.defaultIconId
-        let currentBadge = SGSimpleSettings.shared.customAppBadge ?? "Default"
+        let badge = SGSimpleSettings.shared.customAppBadge
+        let currentBadge = badge.isEmpty ? "Default" : badge
 
         var entries: [AyuBrandingEntry] = []
         entries.append(.appNameHeader(0, "Ayu.Branding.NameSection".i18n(locale)))
