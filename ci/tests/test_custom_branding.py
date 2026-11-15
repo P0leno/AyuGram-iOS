@@ -128,6 +128,11 @@ class CustomBrandingTests(unittest.TestCase):
             self.assertEqual(result['default_icon'], 'CustomPrimary')
             self.assertEqual(result['icons'][0]['title'], 'Nova')
 
+    def test_repo_branding_manifest_defaults_to_telegram(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        config = ayugram_branding.load_branding_config(repo_root, env={})
+        self.assertEqual(config['display_name'], 'Telegram')
+
 
 if __name__ == '__main__':
     unittest.main()

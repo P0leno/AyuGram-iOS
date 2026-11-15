@@ -567,3 +567,6 @@
 "Keychain.SavedAccountsTitle" = "Сохранённые аккаунты";
 "Keychain.SecurityAndSyncHeader" = "APPLE KEYCHAIN И FACE ID";
 "Keychain.iCloudSyncToggle" = "Синхронизация через iCloud Keychain";
+"Ayu.Plugins.CopyLogs" = "Скопировать логи";
+"Ayu.Plugins.ShareLogs" = "Поделиться логами (.txt)";
+"Ayu.Plugins.LogsCopied" = "Скопировано в буфер обмена";

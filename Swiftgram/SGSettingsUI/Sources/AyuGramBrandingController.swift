@@ -300,7 +300,7 @@ public func ayuGramBrandingController(context: AccountContext) -> ViewController
             )
             alert.addTextField { textField in
                 textField.text = AyuGramBrandingConfig.shared.customAppTitle ?? AyuGramBrandingConfig.shared.bundleDisplayName
-                textField.placeholder = "AyuGram"
+                textField.placeholder = "Telegram"
                 textField.clearButtonMode = .whileEditing
             }
             alert.addAction(UIAlertAction(title: data.strings.Common_Cancel, style: .cancel))

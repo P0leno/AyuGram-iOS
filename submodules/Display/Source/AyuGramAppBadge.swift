@@ -107,12 +107,207 @@ public let swiftgramAppBadgeStyles: [(name: String, title: String)] = [
     ("SG:SparklingAppBadge", "Sparkling")
 ]
 
-public func ayuGramAppBadgeImage(style: String, scale: CGFloat) -> UIImage {
-    if style.hasPrefix(swiftgramAppBadgePrefix), let image = ayuGramBundleImageLoader?(String(style.dropFirst(swiftgramAppBadgePrefix.count))) {
-        return image
+public let telegramAppBadgePrefix = "TG:"
+public let ayuCustomTextBadgeId = "AYU:CUSTOM_TEXT"
+public let ayuCustomImageBadgeId = "AYU:CUSTOM_IMAGE"
+
+public let telegramAppBadgeStyles: [(name: String, title: String)] = [
+    ("TG:Default", "Telegram"),
+    ("TG:Blue", "Telegram Blue"),
+    ("TG:Classic", "Classic"),
+    ("TG:Dark", "Dark"),
+    ("TG:Black", "Black"),
+    ("TG:Gold", "Gold"),
+    ("TG:Minimal", "Minimal")
+]
+
+public struct AyuCustomBadgeThemeOption: Identifiable, Equatable {
+    public let id: String
+    public let title: String
+    public let colors: [UIColor]
+    public let textColor: UIColor
+    public let accentColor: UIColor
+}
+
+public let ayuCustomBadgeThemes: [AyuCustomBadgeThemeOption] = [
+    AyuCustomBadgeThemeOption(
+        id: "telegram",
+        title: "Telegram Blue",
+        colors: [ayuBadgeColor(0.16, 0.56, 0.96), ayuBadgeColor(0.11, 0.70, 0.96)],
+        textColor: .white,
+        accentColor: ayuBadgeColor(0.84, 0.94, 1.0)
+    ),
+    AyuCustomBadgeThemeOption(
+        id: "purple",
+        title: "Ayu Purple",
+        colors: [ayuBadgeColor(0.38, 0.24, 0.85), ayuBadgeColor(0.62, 0.34, 0.98)],
+        textColor: .white,
+        accentColor: ayuBadgeColor(0.88, 0.80, 1.0)
+    ),
+    AyuCustomBadgeThemeOption(
+        id: "midnight",
+        title: "Midnight",
+        colors: [ayuBadgeColor(0.06, 0.08, 0.20), ayuBadgeColor(0.14, 0.17, 0.36)],
+        textColor: .white,
+        accentColor: ayuBadgeColor(0.56, 0.72, 1.0)
+    ),
+    AyuCustomBadgeThemeOption(
+        id: "obsidian",
+        title: "Obsidian",
+        colors: [ayuBadgeColor(0.05, 0.05, 0.06), ayuBadgeColor(0.18, 0.18, 0.20)],
+        textColor: ayuBadgeColor(0.95, 0.95, 0.97),
+        accentColor: ayuBadgeColor(0.70, 0.70, 0.74)
+    ),
+    AyuCustomBadgeThemeOption(
+        id: "crimson",
+        title: "Crimson",
+        colors: [ayuBadgeColor(0.75, 0.12, 0.24), ayuBadgeColor(0.95, 0.30, 0.24)],
+        textColor: .white,
+        accentColor: ayuBadgeColor(1.0, 0.84, 0.84)
+    ),
+    AyuCustomBadgeThemeOption(
+        id: "emerald",
+        title: "Emerald",
+        colors: [ayuBadgeColor(0.06, 0.54, 0.38), ayuBadgeColor(0.14, 0.74, 0.52)],
+        textColor: .white,
+        accentColor: ayuBadgeColor(0.80, 1.0, 0.90)
+    ),
+    AyuCustomBadgeThemeOption(
+        id: "gold",
+        title: "Gold",
+        colors: [ayuBadgeColor(0.72, 0.50, 0.08), ayuBadgeColor(0.94, 0.72, 0.20)],
+        textColor: ayuBadgeColor(0.12, 0.08, 0.02),
+        accentColor: ayuBadgeColor(0.30, 0.20, 0.04)
+    ),
+    AyuCustomBadgeThemeOption(
+        id: "sunset",
+        title: "Sunset",
+        colors: [ayuBadgeColor(0.46, 0.22, 0.96), ayuBadgeColor(0.92, 0.38, 0.34)],
+        textColor: .white,
+        accentColor: ayuBadgeColor(1.0, 0.88, 0.82)
+    )
+]
+
+private enum CustomBadgeDefaultsKey {
+    static let text = "ayugram.customBadge.text"
+    static let theme = "ayugram.customBadge.theme"
+    static let showIcon = "ayugram.customBadge.showIcon"
+}
+
+public func ayuCustomBadgeSettings() -> (text: String, themeId: String, showIcon: Bool) {
+    let defaults = UserDefaults.standard
+    let rawText = defaults.string(forKey: CustomBadgeDefaultsKey.text)
+    let text = rawText?.trimmingCharacters(in: .newlines) ?? "TELEGRAM"
+    let themeId = defaults.string(forKey: CustomBadgeDefaultsKey.theme) ?? "telegram"
+    let showIcon = defaults.object(forKey: CustomBadgeDefaultsKey.showIcon) as? Bool ?? true
+    return (text, themeId, showIcon)
+}
+
+public func ayuSetCustomBadgeSettings(text: String, themeId: String, showIcon: Bool) {
+    let defaults = UserDefaults.standard
+    let cleaned = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(18))
+    defaults.set(cleaned, forKey: CustomBadgeDefaultsKey.text)
+    defaults.set(themeId, forKey: CustomBadgeDefaultsKey.theme)
+    defaults.set(showIcon, forKey: CustomBadgeDefaultsKey.showIcon)
+}
+
+public func ayuCustomBadgeImageURL() -> URL? {
+    guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+        return nil
     }
-    let style = ayuBadgeStyle(style)
-    let base = CGSize(width: 108, height: 23)
+    return appSupport.appendingPathComponent("AyuGramCustomBadge", isDirectory: true).appendingPathComponent("badge.png")
+}
+
+public func ayuHasCustomBadgeImage() -> Bool {
+    guard let url = ayuCustomBadgeImageURL() else {
+        return false
+    }
+    return FileManager.default.fileExists(atPath: url.path)
+}
+
+@discardableResult
+public func ayuSaveCustomBadgeImage(_ sourceImage: UIImage) -> Bool {
+    guard let url = ayuCustomBadgeImageURL() else {
+        return false
+    }
+    let dir = url.deletingLastPathComponent()
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+    let targetHeight: CGFloat = 23.0
+    let aspect = sourceImage.size.height > 0 ? (sourceImage.size.width / sourceImage.size.height) : 4.0
+    let targetWidth = max(23.0, min(140.0, round(targetHeight * aspect)))
+    let targetSize = CGSize(width: targetWidth, height: targetHeight)
+
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 3.0
+    format.opaque = false
+    let rendered = UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
+        let capsule = UIBezierPath(roundedRect: CGRect(origin: .zero, size: targetSize), cornerRadius: targetHeight / 2.0)
+        capsule.addClip()
+        sourceImage.draw(in: CGRect(origin: .zero, size: targetSize))
+    }
+    guard let pngData = rendered.pngData() else {
+        return false
+    }
+    do {
+        try pngData.write(to: url, options: .atomic)
+        return true
+    } catch {
+        return false
+    }
+}
+
+public func ayuClearCustomBadgeImage() {
+    guard let url = ayuCustomBadgeImageURL() else {
+        return
+    }
+    try? FileManager.default.removeItem(at: url)
+}
+
+private func ayuTelegramBadgeStyle(_ name: String) -> AyuBadgeStyle {
+    switch name {
+    case "TG:Blue":
+        return AyuBadgeStyle(colors: [ayuBadgeColor(0.14, 0.56, 0.96), ayuBadgeColor(0.08, 0.72, 0.96)], foreground: .white, secondary: ayuBadgeColor(0.84, 0.94, 1.0), text: .white, watermark: 0.10, dots: [], dotRadius: 0 ... 0, dotCount: 0, glow: ayuBadgeColor(1, 1, 1, 0.18))
+    case "TG:Classic":
+        return AyuBadgeStyle(colors: [ayuBadgeColor(0.18, 0.64, 0.90), ayuBadgeColor(0.15, 0.56, 0.84)], foreground: .white, secondary: ayuBadgeColor(0.84, 0.95, 1.0), text: .white, watermark: 0.0, dots: [], dotRadius: 0 ... 0, dotCount: 0, glow: nil)
+    case "TG:Dark":
+        return AyuBadgeStyle(colors: [ayuBadgeColor(0.11, 0.14, 0.22), ayuBadgeColor(0.17, 0.22, 0.34)], foreground: ayuBadgeColor(0.24, 0.68, 1.0), secondary: ayuBadgeColor(0.62, 0.86, 1.0), text: .white, watermark: 0.0, dots: [], dotRadius: 0 ... 0, dotCount: 0, glow: nil)
+    case "TG:Black":
+        return AyuBadgeStyle(colors: [ayuBadgeColor(0.04, 0.04, 0.05), ayuBadgeColor(0.12, 0.12, 0.14)], foreground: .white, secondary: ayuBadgeColor(0.75, 0.75, 0.78), text: .white, watermark: 0.0, dots: [], dotRadius: 0 ... 0, dotCount: 0, glow: ayuBadgeColor(1, 1, 1, 0.06))
+    case "TG:Gold":
+        return AyuBadgeStyle(colors: [ayuBadgeColor(0.72, 0.50, 0.10), ayuBadgeColor(0.95, 0.74, 0.24)], foreground: ayuBadgeColor(0.15, 0.10, 0.02), secondary: ayuBadgeColor(0.32, 0.22, 0.05), text: ayuBadgeColor(0.14, 0.09, 0.02), watermark: 0.08, dots: [], dotRadius: 0 ... 0, dotCount: 0, glow: ayuBadgeColor(1, 1, 1, 0.24))
+    case "TG:Minimal":
+        return AyuBadgeStyle(colors: [ayuBadgeColor(0.94, 0.96, 0.99), ayuBadgeColor(0.88, 0.92, 0.97)], foreground: ayuBadgeColor(0.14, 0.54, 0.94), secondary: ayuBadgeColor(0.40, 0.72, 0.98), text: ayuBadgeColor(0.10, 0.22, 0.38), watermark: 0.0, dots: [], dotRadius: 0 ... 0, dotCount: 0, glow: nil)
+    default: // TG:Default
+        return AyuBadgeStyle(colors: [ayuBadgeColor(0.16, 0.54, 0.95), ayuBadgeColor(0.24, 0.66, 0.98)], foreground: .white, secondary: ayuBadgeColor(0.84, 0.94, 1.0), text: .white, watermark: 0.08, dots: [], dotRadius: 0 ... 0, dotCount: 0, glow: nil)
+    }
+}
+
+private func ayuRenderCapsuleBadge(
+    label: String,
+    style: AyuBadgeStyle,
+    showIcon: Bool,
+    scale: CGFloat,
+    fixedWidth: CGFloat? = nil
+) -> UIImage {
+    let font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+    let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: style.text]
+    let nsText = label as NSString
+    let textSize = nsText.size(withAttributes: attributes)
+
+    let height: CGFloat = 23
+    let computedWidth: CGFloat
+    if let fixedWidth {
+        computedWidth = fixedWidth
+    } else if label.isEmpty && showIcon {
+        computedWidth = 34
+    } else if showIcon {
+        computedWidth = max(76, min(168, ceil(28 + textSize.width + 10)))
+    } else {
+        computedWidth = max(56, min(168, ceil(textSize.width + 20)))
+    }
+
+    let base = CGSize(width: computedWidth, height: height)
     let format = UIGraphicsImageRendererFormat.preferred()
     if scale > 0 {
         format.scale = scale
@@ -141,15 +336,61 @@ public func ayuGramAppBadgeImage(style: String, scale: CGFloat) -> UIImage {
             UIBezierPath(ovalIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)).fill()
         }
         if style.watermark > 0 {
-            ayuPlane(CGRect(x: -3, y: -10, width: 116, height: 45), foreground: UIColor.black.withAlphaComponent(style.watermark), secondary: UIColor.black.withAlphaComponent(style.watermark * 0.65))
+            ayuPlane(CGRect(x: -3, y: -10, width: base.width + 8, height: 45), foreground: UIColor.black.withAlphaComponent(style.watermark), secondary: UIColor.black.withAlphaComponent(style.watermark * 0.65))
         }
         context.restoreGState()
-        ayuPlane(CGRect(x: 7, y: 3, width: 17, height: 17), foreground: style.foreground, secondary: style.secondary)
-        let attributes: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: style.text]
-        let text = "AYUGRAM" as NSString
-        let textSize = text.size(withAttributes: attributes)
-        text.draw(at: CGPoint(x: 28, y: (base.height - textSize.height) / 2), withAttributes: attributes)
+
+        if showIcon {
+            let iconX: CGFloat = label.isEmpty ? (base.width - 17) / 2.0 : 7.0
+            ayuPlane(CGRect(x: iconX, y: 3, width: 17, height: 17), foreground: style.foreground, secondary: style.secondary)
+        }
+        if !label.isEmpty {
+            let textX: CGFloat = showIcon ? 28.0 : floor((base.width - textSize.width) / 2.0)
+            let maxWidth = max(10.0, base.width - textX - 8.0)
+            nsText.draw(
+                in: CGRect(x: textX, y: (base.height - textSize.height) / 2.0, width: maxWidth, height: textSize.height),
+                withAttributes: attributes
+            )
+        }
     }
+}
+
+public func ayuGramCustomBadgePreview(text: String, themeId: String, showIcon: Bool, scale: CGFloat) -> UIImage {
+    let theme = ayuCustomBadgeThemes.first(where: { $0.id == themeId }) ?? ayuCustomBadgeThemes[0]
+    let badgeStyle = AyuBadgeStyle(
+        colors: theme.colors,
+        foreground: theme.textColor,
+        secondary: theme.accentColor,
+        text: theme.textColor,
+        watermark: 0.08,
+        dots: [],
+        dotRadius: 0 ... 0,
+        dotCount: 0,
+        glow: ayuBadgeColor(1, 1, 1, 0.14)
+    )
+    return ayuRenderCapsuleBadge(label: String(text.prefix(18)), style: badgeStyle, showIcon: showIcon, scale: scale)
+}
+
+public func ayuGramAppBadgeImage(style: String, scale: CGFloat) -> UIImage {
+    if style == ayuCustomImageBadgeId,
+       let url = ayuCustomBadgeImageURL(),
+       let data = try? Data(contentsOf: url),
+       let image = UIImage(data: data, scale: 3.0) {
+        return image
+    }
+    if style == ayuCustomTextBadgeId {
+        let custom = ayuCustomBadgeSettings()
+        return ayuGramCustomBadgePreview(text: custom.text, themeId: custom.themeId, showIcon: custom.showIcon, scale: scale)
+    }
+    if style.hasPrefix(telegramAppBadgePrefix) {
+        let tgStyle = ayuTelegramBadgeStyle(style)
+        return ayuRenderCapsuleBadge(label: "TELEGRAM", style: tgStyle, showIcon: true, scale: scale, fixedWidth: 112)
+    }
+    if style.hasPrefix(swiftgramAppBadgePrefix), let image = ayuGramBundleImageLoader?(String(style.dropFirst(swiftgramAppBadgePrefix.count))) {
+        return image
+    }
+    let resolvedStyle = ayuBadgeStyle(style)
+    return ayuRenderCapsuleBadge(label: "AYUGRAM", style: resolvedStyle, showIcon: true, scale: scale, fixedWidth: 108)
 }
 
 func ayuGramAppBadgeImage() -> UIImage {

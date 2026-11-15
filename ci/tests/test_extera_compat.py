@@ -186,6 +186,34 @@ class JClassPlugin(BasePlugin):
             self.assertTrue(res2["incompatible"])
             self.assertIn("Android", res2["error"])
 
+    def test_hook_utils_and_client_utils_extera_imports(self) -> None:
+        plugin_src = """
+from base_plugin import BasePlugin
+from hook_utils import find_class, get_private_field, set_private_field, call_private_method, XposedHelpers
+from client_utils import get_last_fragment, get_account_instance, get_messages_storage, get_notification_center
+
+__id__ = "import_compat"
+__name__ = "Import Compat"
+__version__ = "1.0"
+
+class ImportCompatPlugin(BasePlugin):
+    def on_plugin_load(self):
+        self.frag = get_last_fragment()
+        self.acct = get_account_instance()
+        self.storage = get_messages_storage()
+        get_notification_center().addObserver(None, 0)
+        self.saw_java_error = False
+        try:
+            get_private_field(object(), "mField")
+        except Exception:
+            self.saw_java_error = True
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._write_plugin(Path(tmp), "import_compat.plugin", plugin_src)
+            res = _ayu_runtime_host.load_plugin("import_compat", str(p))
+            self.assertTrue(res["ok"], res)
+            self.assertFalse(res["incompatible"])
+
 
 if __name__ == "__main__":
     unittest.main()

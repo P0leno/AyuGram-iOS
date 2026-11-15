@@ -83,6 +83,7 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
     
     private let hapticFeedback = HapticFeedback()
     private var isManualPasskeyAttempt = false
+    private var activePasskeyAuthController: AnyObject?
     
     public init(sharedContext: SharedAccountContext, account: UnauthorizedAccount?, countriesConfiguration: CountriesConfiguration? = nil, apiId: Int32, apiHash: String, isTestingEnvironment: Bool, otherAccountPhoneNumbers: ((String, AccountRecordId, Bool)?, [(String, AccountRecordId, Bool)]), network: Network, presentationData: PresentationData, openUrl: @escaping (String) -> Void, back: @escaping () -> Void) {
         self.sharedContext = sharedContext
@@ -234,7 +235,14 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
         if #available(iOS 16.0, *) {
             self.isManualPasskeyAttempt = force
             Task { @MainActor [weak self] in
-                guard let self, let account = self.account else {
+                guard let self else {
+                    return
+                }
+                guard let account = self.account else {
+                    self.isManualPasskeyAttempt = false
+                    if force {
+                        self.presentPasskeyFallbackAlert(errorDescription: "Unauthorized session is not ready.")
+                    }
                     return
                 }
                 
@@ -249,33 +257,25 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
                 
                 let engine = TelegramEngineUnauthorized(account: account)
                 let passkeyDataString = await engine.auth.requestPasskeyLoginData(apiId: self.apiId, apiHash: self.apiHash).get()
-                guard let passkeyDataString, let passkeyData = passkeyDataString.data(using: .utf8) else {
+                guard let passkeyDataString, let passkeyData = passkeyDataString.data(using: .utf8),
+                      let params = try? JSONSerialization.jsonObject(with: passkeyData) as? [String: Any],
+                      let pkDict = params["publicKey"] as? [String: Any],
+                      let challengeBase64 = pkDict["challenge"] as? String,
+                      let challengeData = decodeBase64(challengeBase64) else {
                     self.isManualPasskeyAttempt = false
-                    return
-                }
-                guard let params = try? JSONSerialization.jsonObject(with: passkeyData) as? [String: Any] else {
-                    self.isManualPasskeyAttempt = false
-                    return
-                }
-                guard let pkDict = params["publicKey"] as? [String: Any] else {
-                    self.isManualPasskeyAttempt = false
+                    if force {
+                        self.presentPasskeyFallbackAlert(errorDescription: "Failed to fetch Telegram Passkey challenge.")
+                    }
                     return
                 }
                 let relyingPartyIdentifier = (pkDict["rpId"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "telegram.org"
-                guard let challengeBase64 = pkDict["challenge"] as? String else {
-                    self.isManualPasskeyAttempt = false
-                    return
-                }
-                guard let challengeData = decodeBase64(challengeBase64) else {
-                    self.isManualPasskeyAttempt = false
-                    return
-                }
                 
                 let platformProvider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: relyingPartyIdentifier)
                 let platformKeyRequest = platformProvider.createCredentialAssertionRequest(challenge: challengeData)
                 let authController = ASAuthorizationController(authorizationRequests: [platformKeyRequest])
                 authController.delegate = self
                 authController.presentationContextProvider = self
+                self.activePasskeyAuthController = authController
                 if force {
                     authController.performRequests()
                 } else {
@@ -287,6 +287,7 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
     
     public func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
         self.isManualPasskeyAttempt = false
+        self.activePasskeyAuthController = nil
         Task { @MainActor [weak self] in
             guard let self, let account = self.account else {
                 return
@@ -338,6 +339,7 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
     public func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: any Error) {
         let wasManualAttempt = self.isManualPasskeyAttempt
         self.isManualPasskeyAttempt = false
+        self.activePasskeyAuthController = nil
 
         let nsError = error as NSError
         self.controllerNode.updateDisplayPasskeyLoginOption()
@@ -350,24 +352,28 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
         }
 
         if wasManualAttempt {
-            let locale = self.presentationData.strings.baseLanguageCode
-            let message = "Keychain.PasskeyFallbackMessage".i18n(locale, args: error.localizedDescription)
-            let alert = textAlertController(
-                sharedContext: self.sharedContext,
-                title: self.presentationData.strings.Passkeys_Title,
-                text: message,
-                actions: [
-                    TextAlertAction(type: .defaultAction, title: "Keychain.SavedAccountsAction".i18n(locale), action: { [weak self] in
-                        self?.presentSavedAccountsLogin()
-                    }),
-                    TextAlertAction(type: .genericAction, title: "Keychain.RetryPasskey".i18n(locale), action: { [weak self] in
-                        self?.loadAndPresentPasskey(force: true)
-                    }),
-                    TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {})
-                ]
-            )
-            self.present(alert, in: .window(.root))
+            self.presentPasskeyFallbackAlert(errorDescription: error.localizedDescription)
         }
+    }
+
+    private func presentPasskeyFallbackAlert(errorDescription: String) {
+        let locale = self.presentationData.strings.baseLanguageCode
+        let message = "Keychain.PasskeyFallbackMessage".i18n(locale, args: errorDescription)
+        let alert = textAlertController(
+            sharedContext: self.sharedContext,
+            title: self.presentationData.strings.Passkeys_Title,
+            text: message,
+            actions: [
+                TextAlertAction(type: .defaultAction, title: "Keychain.SavedAccountsAction".i18n(locale), action: { [weak self] in
+                    self?.presentSavedAccountsLogin()
+                }),
+                TextAlertAction(type: .genericAction, title: "Keychain.RetryPasskey".i18n(locale), action: { [weak self] in
+                    self?.loadAndPresentPasskey(force: true)
+                }),
+                TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {})
+            ]
+        )
+        self.present(alert, in: .window(.root))
     }
     
     public func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {

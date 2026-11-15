@@ -888,7 +888,18 @@ public class Window1 {
         self.hostView.containerView.addGestureRecognizer(recognizer)
         self.hostView.containerView.addSubview(self.badgeView)
         self.ayuIconObserver = NotificationCenter.default.addObserver(forName: Notification.Name("AyuGram.AppIcon.didChange"), object: nil, queue: .main) { [weak self] _ in
-            self?.badgeView.image = ayuGramAppBadgeImage()
+            guard let self else {
+                return
+            }
+            let image = ayuGramAppBadgeImage()
+            self.badgeView.image = image
+            self.badgeView.frame = CGRect(
+                origin: CGPoint(
+                    x: floorToScreenPixels((self.windowLayout.size.width - image.size.width) / 2.0),
+                    y: self.deviceMetrics.sgAppBadgeOffset()
+                ),
+                size: image.size
+            )
         }
     }
             

@@ -8,6 +8,7 @@ import TelegramPresentationData
 import PresentationDataUtils
 import ItemListUI
 import SGStrings
+import UndoUI
 
 // MARK: - Plugin File Picker
 
@@ -690,21 +691,37 @@ public func ayuPluginDetailController(context: AccountContext, pluginId: String)
 
 // MARK: - Logs & Source Viewers
 
+private final class PluginLogsArguments {
+    let copyAll: () -> Void
+    let shareAll: () -> Void
+    let clearAll: () -> Void
+
+    init(copyAll: @escaping () -> Void, shareAll: @escaping () -> Void, clearAll: @escaping () -> Void) {
+        self.copyAll = copyAll
+        self.shareAll = shareAll
+        self.clearAll = clearAll
+    }
+}
+
 private enum PluginLogsEntry: ItemListNodeEntry {
+    case copyAllButton(Int, String)
+    case shareButton(Int, String)
     case clearButton(Int, String)
     case logLine(Int, String)
     case emptyText(Int, String)
 
     var section: ItemListSectionId {
         switch self {
-        case .clearButton: return 0
+        case .copyAllButton, .shareButton, .clearButton: return 0
         case .logLine, .emptyText: return 1
         }
     }
 
     var stableId: Int {
         switch self {
-        case .clearButton: return 0
+        case .copyAllButton: return 0
+        case .shareButton: return 1
+        case .clearButton: return 2
         case let .logLine(id, _): return 10 + id
         case .emptyText: return 5
         }
@@ -715,8 +732,30 @@ private enum PluginLogsEntry: ItemListNodeEntry {
     }
 
     func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
-        let onClear = arguments as! () -> Void
+        let args = arguments as? PluginLogsArguments
         switch self {
+        case let .copyAllButton(_, title):
+            return ItemListActionItem(
+                presentationData: presentationData,
+                systemStyle: .glass,
+                title: title,
+                kind: .generic,
+                alignment: .natural,
+                sectionId: self.section,
+                style: .blocks,
+                action: { args?.copyAll() }
+            )
+        case let .shareButton(_, title):
+            return ItemListActionItem(
+                presentationData: presentationData,
+                systemStyle: .glass,
+                title: title,
+                kind: .generic,
+                alignment: .natural,
+                sectionId: self.section,
+                style: .blocks,
+                action: { args?.shareAll() }
+            )
         case let .clearButton(_, title):
             return ItemListActionItem(
                 presentationData: presentationData,
@@ -726,7 +765,7 @@ private enum PluginLogsEntry: ItemListNodeEntry {
                 alignment: .natural,
                 sectionId: self.section,
                 style: .blocks,
-                action: { onClear() }
+                action: { args?.clearAll() }
             )
         case let .logLine(_, text), let .emptyText(_, text):
             return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
@@ -734,7 +773,19 @@ private enum PluginLogsEntry: ItemListNodeEntry {
     }
 }
 
+private func ayuPresentCopiedToast(context: AccountContext, controller: ViewController?, text: String) {
+    let data = context.sharedContext.currentPresentationData.with { $0 }
+    let toast = UndoOverlayController(
+        presentationData: data,
+        content: .copy(text: text),
+        elevatedLayout: false,
+        action: { _ in return false }
+    )
+    controller?.present(toast, in: .current)
+}
+
 public func ayuPluginLogsController(context: AccountContext) -> ViewController {
+    var weakController: ViewController?
     let changes = Signal<Int, NoError> { subscriber in
         subscriber.putNext(0)
         let observer = NotificationCenter.default.addObserver(
@@ -749,20 +800,66 @@ public func ayuPluginLogsController(context: AccountContext) -> ViewController {
         }
     }
 
+    let formatter = DateFormatter()
+    formatter.dateFormat = "HH:mm:ss"
+
+    let formattedLogsText: () -> String = {
+        let logs = SGPluginEngine.shared.recentLogs()
+        return logs.map { item in
+            "[\(formatter.string(from: item.timestamp))] [\(item.level.uppercased())] [\(item.pluginId)] \(item.message)"
+        }.joined(separator: "\n")
+    }
+
+    let copyAllAction: () -> Void = {
+        let text = formattedLogsText()
+        guard !text.isEmpty else {
+            return
+        }
+        UIPasteboard.general.string = text
+        let data = context.sharedContext.currentPresentationData.with { $0 }
+        ayuPresentCopiedToast(context: context, controller: weakController, text: "Ayu.Plugins.LogsCopied".i18n(data.strings.baseLanguageCode))
+    }
+
+    let shareAllAction: () -> Void = {
+        let text = formattedLogsText()
+        guard !text.isEmpty, let controller = weakController else {
+            return
+        }
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("ayugram-plugin-logs.txt")
+        do {
+            try text.write(to: tempURL, atomically: true, encoding: .utf8)
+            let activity = UIActivityViewController(activityItems: [tempURL], applicationActivities: nil)
+            activity.completionWithItemsHandler = { _, _, _, _ in
+                try? FileManager.default.removeItem(at: tempURL)
+            }
+            if let view = controller.view {
+                activity.popoverPresentationController?.sourceView = view
+                activity.popoverPresentationController?.sourceRect = CGRect(origin: CGPoint(x: view.bounds.midX, y: view.bounds.midY), size: CGSize(width: 1.0, height: 1.0))
+            }
+            controller.present(activity, animated: true)
+        } catch {
+            UIPasteboard.general.string = text
+            let data = context.sharedContext.currentPresentationData.with { $0 }
+            ayuPresentCopiedToast(context: context, controller: controller, text: "Ayu.Plugins.LogsCopied".i18n(data.strings.baseLanguageCode))
+        }
+    }
+
     let clearAction: () -> Void = {
         SGPluginEngine.shared.clearLogs()
     }
 
-    let formatter = DateFormatter()
-    formatter.dateFormat = "HH:mm:ss"
+    let arguments = PluginLogsArguments(copyAll: copyAllAction, shareAll: shareAllAction, clearAll: clearAction)
 
     let stateSignal = combineLatest(context.sharedContext.presentationData, changes)
     |> map { presentationData, _ -> (ItemListControllerState, (ItemListNodeState, Any)) in
         let lang = presentationData.strings.baseLanguageCode
         let logs = SGPluginEngine.shared.recentLogs().reversed()
-        var entries: [PluginLogsEntry] = [
-            .clearButton(0, "Ayu.Plugins.ClearLogs".i18n(lang))
-        ]
+        var entries: [PluginLogsEntry] = []
+        if !logs.isEmpty {
+            entries.append(.copyAllButton(0, "Ayu.Plugins.CopyLogs".i18n(lang)))
+            entries.append(.shareButton(1, "Ayu.Plugins.ShareLogs".i18n(lang)))
+        }
+        entries.append(.clearButton(2, "Ayu.Plugins.ClearLogs".i18n(lang)))
         if logs.isEmpty {
             entries.append(.emptyText(5, "Ayu.Plugins.LogsEmpty".i18n(lang)))
         } else {
@@ -771,11 +868,17 @@ public func ayuPluginLogsController(context: AccountContext) -> ViewController {
                 entries.append(.logLine(index, line))
             }
         }
+        let rightButton: ItemListNavigationButton? = logs.isEmpty ? nil : ItemListNavigationButton(
+            content: .text("Ayu.Plugins.CopyLogs".i18n(lang)),
+            style: .regular,
+            enabled: true,
+            action: { copyAllAction() }
+        )
         let controllerState = ItemListControllerState(
             presentationData: ItemListPresentationData(presentationData),
             title: .text("Ayu.Plugins.Logs".i18n(lang)),
             leftNavigationButton: nil,
-            rightNavigationButton: nil,
+            rightNavigationButton: rightButton,
             backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)
         )
         let nodeState = ItemListNodeState(
@@ -783,13 +886,16 @@ public func ayuPluginLogsController(context: AccountContext) -> ViewController {
             entries: entries,
             style: .blocks
         )
-        return (controllerState, (nodeState, clearAction))
+        return (controllerState, (nodeState, arguments))
     }
 
-    return ItemListController(context: context, state: stateSignal)
+    let controller = ItemListController(context: context, state: stateSignal)
+    weakController = controller
+    return controller
 }
 
 private func ayuPluginSourceViewerController(context: AccountContext, pluginId: String) -> ViewController {
+    var weakController: ViewController?
     let sourceText = SGPluginEngine.shared.readPluginSource(pluginId)
     let stateSignal = context.sharedContext.presentationData
     |> map { presentationData -> (ItemListControllerState, (ItemListNodeState, Any)) in
@@ -810,11 +916,21 @@ private func ayuPluginSourceViewerController(context: AccountContext, pluginId: 
         let entries: [PluginLogsEntry] = chunks.enumerated().map { idx, chunk in
             .logLine(idx, chunk)
         }
+        let lang = presentationData.strings.baseLanguageCode
+        let rightButton: ItemListNavigationButton? = sourceText.isEmpty ? nil : ItemListNavigationButton(
+            content: .text("Ayu.Plugins.CopyLogs".i18n(lang)),
+            style: .regular,
+            enabled: true,
+            action: {
+                UIPasteboard.general.string = sourceText
+                ayuPresentCopiedToast(context: context, controller: weakController, text: "Ayu.Plugins.LogsCopied".i18n(lang))
+            }
+        )
         let controllerState = ItemListControllerState(
             presentationData: ItemListPresentationData(presentationData),
             title: .text("\(pluginId).plugin"),
             leftNavigationButton: nil,
-            rightNavigationButton: nil,
+            rightNavigationButton: rightButton,
             backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)
         )
         let nodeState = ItemListNodeState(
@@ -825,5 +941,7 @@ private func ayuPluginSourceViewerController(context: AccountContext, pluginId: 
         let noop: () -> Void = {}
         return (controllerState, (nodeState, noop))
     }
-    return ItemListController(context: context, state: stateSignal)
+    let controller = ItemListController(context: context, state: stateSignal)
+    weakController = controller
+    return controller
 }

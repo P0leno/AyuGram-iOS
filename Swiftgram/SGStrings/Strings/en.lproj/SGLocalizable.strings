@@ -572,3 +572,6 @@
 "Keychain.SavedAccountsTitle" = "Saved Accounts";
 "Keychain.SecurityAndSyncHeader" = "APPLE KEYCHAIN & FACE ID";
 "Keychain.iCloudSyncToggle" = "Sync via iCloud Keychain";
+"Ayu.Plugins.CopyLogs" = "Copy Logs";
+"Ayu.Plugins.ShareLogs" = "Share Logs (.txt)";
+"Ayu.Plugins.LogsCopied" = "Copied to clipboard";

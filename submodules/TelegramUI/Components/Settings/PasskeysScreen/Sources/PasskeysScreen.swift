@@ -14,6 +14,7 @@ import ButtonComponent
 import AccountContext
 import AuthenticationServices
 import PresentationDataUtils
+import SGStrings
 
 final class PasskeysScreenComponent: Component {
     typealias EnvironmentType = ViewControllerComponentContainer.Environment
@@ -59,6 +60,7 @@ final class PasskeysScreenComponent: Component {
 
         private var passkeysData: [TelegramPasskey]?
         private var loadPasskeysDataDisposable: Disposable?
+        private var activeAuthController: AnyObject?
         
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -73,6 +75,7 @@ final class PasskeysScreenComponent: Component {
         }
         
         func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
+            self.activeAuthController = nil
             Task { @MainActor [weak self] in
                 guard let self, let component = self.component else {
                     return
@@ -106,6 +109,7 @@ final class PasskeysScreenComponent: Component {
         }
 
         func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: any Error) {
+            self.activeAuthController = nil
             let nsError = error as NSError
             if nsError.domain == ASAuthorizationError.errorDomain && nsError.code == ASAuthorizationError.canceled.rawValue {
                 return
@@ -114,7 +118,7 @@ final class PasskeysScreenComponent: Component {
             guard let component = self.component, let environment = self.environment, let viewController = environment.controller() else {
                 return
             }
-            let message = "\(error.localizedDescription)\n\nNote: Apple Passkeys require an officially signed build whose Associated Domains match telegram.org. For sideloaded builds, use Keychain Session Backup."
+            let message = "Keychain.PasskeyFallbackMessage".i18n(environment.strings.baseLanguageCode, args: error.localizedDescription)
             let alert = textAlertController(
                 context: component.context,
                 title: environment.strings.Passkeys_Title,
@@ -183,6 +187,7 @@ final class PasskeysScreenComponent: Component {
                     let authController = ASAuthorizationController(authorizationRequests: [platformKeyRequest])
                     authController.delegate = self
                     authController.presentationContextProvider = self
+                    self.activeAuthController = authController
                     authController.performRequests()
                     
                     component.completion()

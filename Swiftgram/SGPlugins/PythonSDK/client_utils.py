@@ -142,3 +142,111 @@ __all__ = [
     "send_message",
     "send_request",
 ]
+
+
+GLOBAL_QUEUE = "global"
+STAGE_QUEUE = "stage"
+PLUGINS_QUEUE = "plugins"
+
+
+class _NotificationCenterShim:
+    def addObserver(self, *_args, **_kwargs) -> None:
+        return None
+
+    def removeObserver(self, *_args, **_kwargs) -> None:
+        return None
+
+    def postNotificationName(self, *_args, **_kwargs) -> None:
+        return None
+
+
+class _AccountInstanceShim:
+    def getUserConfig(self):
+        return get_user_config()
+
+    def getMessagesController(self):
+        return get_messages_controller()
+
+    def getSendMessagesHelper(self):
+        return get_send_messages_helper()
+
+    def getConnectionsManager(self):
+        return get_connections_manager()
+
+    def getNotificationCenter(self):
+        return _NotificationCenterShim()
+
+
+class _GenericClientShim:
+    def __getattr__(self, _name: str):
+        return lambda *_args, **_kwargs: None
+
+
+def get_last_fragment():
+    """Return active Android BaseFragment if present (None on iOS)."""
+    return None
+
+
+def get_current_fragment():
+    return get_last_fragment()
+
+
+def get_account_instance(_account: int = 0):
+    return _AccountInstanceShim()
+
+
+def get_messages_storage():
+    return _GenericClientShim()
+
+
+def get_media_controller():
+    return _GenericClientShim()
+
+
+def get_media_data_controller():
+    return _GenericClientShim()
+
+
+def get_file_loader():
+    return _GenericClientShim()
+
+
+def get_download_controller():
+    return _GenericClientShim()
+
+
+def get_contacts_controller():
+    return _GenericClientShim()
+
+
+def get_location_controller():
+    return _GenericClientShim()
+
+
+def get_notification_center():
+    return _NotificationCenterShim()
+
+
+def run_on_ui_thread(fn, delay: float = 0.0) -> None:
+    import android_utils
+
+    android_utils.run_on_ui_thread(fn, delay=delay)
+
+
+__all__ = list(globals().get("__all__", [])) + [
+    "GLOBAL_QUEUE",
+    "PLUGINS_QUEUE",
+    "STAGE_QUEUE",
+    "get_account_instance",
+    "get_contacts_controller",
+    "get_current_fragment",
+    "get_download_controller",
+    "get_file_loader",
+    "get_last_fragment",
+    "get_location_controller",
+    "get_media_controller",
+    "get_media_data_controller",
+    "get_messages_storage",
+    "get_notification_center",
+    "run_on_ui_thread",
+]
