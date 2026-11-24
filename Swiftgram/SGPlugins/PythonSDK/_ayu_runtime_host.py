@@ -125,7 +125,20 @@ _PLUGINS: dict[str, dict[str, Any]] = {}
 _ACTION_CALLBACKS: dict[str, dict[str, Callable[..., Any]]] = {}
 _ALERT_CALLBACKS: dict[str, Callable[..., Any]] = {}
 _LOADING_DIAGNOSTICS: dict[str, list[str]] = {}
+_METHOD_HOOKS: dict[str, dict[str, list[Any]]] = {}
 _CURRENT_LOADING_ID: str | None = None
+
+
+def _ensure_import_hooks() -> None:
+    try:
+        import _java_bridge
+
+        _java_bridge.install_java_import_hook()
+    except Exception:
+        pass
+
+
+_ensure_import_hooks()
 
 
 def set_native_backend(backend: Any | None) -> Any:
@@ -134,6 +147,18 @@ def set_native_backend(backend: Any | None) -> Any:
     with _LOCK:
         _NATIVE_BACKEND = backend if backend is not None else _detect_native_backend()
         return _NATIVE_BACKEND
+
+
+def register_method_hook(hook_kind: str, handler: Any) -> dict[str, Any]:
+    """Attach an Xposed `MethodHook` handler to a bridged iOS pipeline (`send_message` / `receive_message`)."""
+    with _LOCK:
+        pid = _CURRENT_LOADING_ID or "global"
+        if handler is not None:
+            _METHOD_HOOKS.setdefault(pid, {}).setdefault(hook_kind, []).append(handler)
+            entry = _PLUGINS.get(pid)
+            if entry is not None and hook_kind == "send_message":
+                entry["instance"].add_on_send_message_hook()
+    return {"plugin_id": pid, "hook_kind": hook_kind, "active": handler is not None}
 
 
 def reset_host_state() -> None:
@@ -148,6 +173,7 @@ def reset_host_state() -> None:
         _ACTION_CALLBACKS.clear()
         _ALERT_CALLBACKS.clear()
         _LOADING_DIAGNOSTICS.clear()
+        _METHOD_HOOKS.clear()
 
 
 def log(level: str, plugin_id: str, message: str) -> None:
@@ -331,6 +357,8 @@ def load_plugin(plugin_id: str, file_path: str, module_name: str | None = None) 
 
         with _LOCK:
             warnings = list(_LOADING_DIAGNOSTICS.get(plugin_id, []))
+            if _METHOD_HOOKS.get(plugin_id, {}).get("send_message"):
+                instance.add_on_send_message_hook()
             entry = {
                 "id": plugin_id,
                 "module_name": mod_name,
@@ -401,6 +429,7 @@ def unload_plugin(plugin_id: str) -> dict[str, Any]:
     with _LOCK:
         entry = _PLUGINS.pop(plugin_id, None)
         _ACTION_CALLBACKS.pop(plugin_id, None)
+        _METHOD_HOOKS.pop(plugin_id, None)
     if entry is None:
         return {"ok": True, "was_loaded": False}
 
@@ -436,6 +465,27 @@ def dispatch_send_message_hook(account: int, params_dict: dict[str, Any]) -> dic
     for entry in entries:
         plugin_id = entry["id"]
         instance = entry["instance"]
+        with _LOCK:
+            method_hooks = list(_METHOD_HOOKS.get(plugin_id, {}).get("send_message", []))
+        for mh in method_hooks:
+            try:
+                orig_message = current_params.message
+                param_obj = HookParams({"account": account, "args": [current_params], "thisObject": None, "result": None})
+                param_obj["message"] = orig_message
+                param_obj["peer_id"] = current_params.peer_id
+                if hasattr(mh, "before_hooked_method"):
+                    mh.before_hooked_method(param_obj)
+                    args_out = param_obj.get("args")
+                    if isinstance(args_out, list) and args_out and isinstance(args_out[0], dict):
+                        if args_out[0] is not current_params or args_out[0].get("message") != orig_message:
+                            current_params = HookParams(args_out[0])
+                            modified = True
+                    if param_obj.get("message") is not None and param_obj.get("message") != orig_message:
+                        current_params["message"] = param_obj["message"]
+                        modified = True
+            except Exception as exc:
+                log("error", plugin_id, f"MethodHook send_message failed: {exc}\n{traceback.format_exc()}")
+
         try:
             result = instance.on_send_message_hook(account, current_params)
         except Exception as exc:

@@ -286,6 +286,52 @@ class SmartBridgePlugin(BasePlugin):
             self.assertEqual(self.backend.clipboard[-1], "OK:hello:777")
             self.assertEqual(self.backend.bulletins[-1], ("", "OK:hello:777", "success"))
 
+    def test_java_package_imports_and_send_message_method_hook(self) -> None:
+        self.backend.account["id"] = 99
+        plugin_src = """
+from base_plugin import BasePlugin, MethodHook
+from hook_utils import find_class, hook_method
+from org.telegram.messenger import AndroidUtilities, FileLog, UserConfig
+from android.graphics import Color
+from org.json import JSONObject
+
+__id__ = "pkg_hook"
+__name__ = "Package Import & MethodHook"
+__version__ = "1.0"
+
+class PrefixMethodHook(MethodHook):
+    def before_hooked_method(self, param):
+        args = param.args
+        if args and hasattr(args[0], "message"):
+            args[0].message = "[HOOK] " + str(args[0].message)
+
+class PkgHookPlugin(BasePlugin):
+    def on_plugin_load(self):
+        FileLog.d("Loaded pkg_hook")
+        self.color_red = Color.RED
+        obj = JSONObject('{"k": "v"}')
+        self.json_val = obj.getString("k")
+        self.uid = UserConfig.getInstance(0).getClientUserId()
+        smh = find_class("org.telegram.messenger.SendMessagesHelper")
+        hook_method(smh, "sendMessage", PrefixMethodHook())
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._write_plugin(Path(tmp), "pkg_hook.plugin", plugin_src)
+            load_res = _ayu_runtime_host.load_plugin("pkg_hook", str(p))
+            self.assertTrue(load_res["ok"], load_res)
+            self.assertFalse(load_res["incompatible"])
+
+            inst = _ayu_runtime_host._PLUGINS["pkg_hook"]["instance"]
+            self.assertEqual(inst.color_red, 0xFFFF0000)
+            self.assertEqual(inst.json_val, "v")
+            self.assertEqual(inst.uid, 99)
+
+            hook_res = _ayu_runtime_host.dispatch_send_message_hook(
+                99, {"message": "ping", "peer_id": 123}
+            )
+            self.assertEqual(hook_res["action"], "modify")
+            self.assertEqual(hook_res["params"]["message"], "[HOOK] ping")
+
 
 if __name__ == "__main__":
     unittest.main()

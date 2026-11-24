@@ -33,7 +33,20 @@ def find_constructor(*_args: Any, **_kwargs: Any) -> Any:
     raise _unsupported("hook_utils.find_constructor")
 
 
-def hook_method(method_ref: Any, *_args: Any, **_kwargs: Any) -> Any:
+def hook_method(method_ref: Any, *args: Any, **kwargs: Any) -> Any:
+    import _ayu_runtime_host
+    from _java_bridge import MessagesControllerBridge, SendMessagesHelperBridge
+
+    handler = args[-1] if args else kwargs.get("handler")
+    method_name = str(args[0]) if len(args) >= 2 and isinstance(args[0], str) else str(method_ref)
+    if method_ref in (SendMessagesHelperBridge, "SendMessagesHelper") or "sendMessage" in method_name:
+        if getattr(method_ref, "_ayu_bridged", False) or isinstance(method_ref, type) and method_ref is SendMessagesHelperBridge:
+            return _ayu_runtime_host.register_method_hook("send_message", handler)
+    if method_ref in (MessagesControllerBridge, "MessagesController") and (
+        "processUpdates" in method_name or "Notification" in method_name
+    ):
+        return _ayu_runtime_host.register_method_hook("receive_message", handler)
+
     raise _unsupported("hook_utils.hook_method", str(method_ref))
 
 
@@ -41,7 +54,13 @@ def hook_methods(*_args: Any, **_kwargs: Any) -> Any:
     raise _unsupported("hook_utils.hook_methods")
 
 
-def hook_all_methods(clazz: Any, method_name: str, *_args: Any, **_kwargs: Any) -> Any:
+def hook_all_methods(clazz: Any, method_name: str, *args: Any, **_kwargs: Any) -> Any:
+    from _java_bridge import MessagesControllerBridge, SendMessagesHelperBridge
+
+    if clazz is SendMessagesHelperBridge and "send" in str(method_name).lower():
+        return hook_method(clazz, method_name, args[-1] if args else None)
+    if clazz is MessagesControllerBridge and "update" in str(method_name).lower():
+        return hook_method(clazz, method_name, args[-1] if args else None)
     raise _unsupported("hook_utils.hook_all_methods", f"{clazz}.{method_name}")
 
 

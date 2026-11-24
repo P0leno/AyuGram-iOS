@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.abc
+import importlib.util
+import json
 import os
+import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -572,22 +577,283 @@ class _TLRPCNamespace:
         return _make_tl_class(f"org.telegram.tgnet.TLRPC${name}")
 
 
+class FileLogBridge:
+    _ayu_bridged = True
+
+    @staticmethod
+    def d(msg: Any) -> None:
+        _ayu_runtime_host.log("info", _ayu_runtime_host.get_current_plugin_id() or "FileLog", str(msg))
+
+    @staticmethod
+    def i(msg: Any) -> None:
+        FileLogBridge.d(msg)
+
+    @staticmethod
+    def w(msg: Any) -> None:
+        _ayu_runtime_host.log("warn", _ayu_runtime_host.get_current_plugin_id() or "FileLog", str(msg))
+
+    @staticmethod
+    def e(msg: Any, exc: Any = None) -> None:
+        text = f"{msg}: {exc}" if exc is not None else str(msg)
+        _ayu_runtime_host.log("error", _ayu_runtime_host.get_current_plugin_id() or "FileLog", text)
+
+
+class AndroidLogBridge:
+    _ayu_bridged = True
+
+    @staticmethod
+    def d(tag: str, msg: Any) -> int:
+        _ayu_runtime_host.log("info", str(tag), str(msg))
+        return 0
+
+    @staticmethod
+    def i(tag: str, msg: Any) -> int:
+        _ayu_runtime_host.log("info", str(tag), str(msg))
+        return 0
+
+    @staticmethod
+    def w(tag: str, msg: Any) -> int:
+        _ayu_runtime_host.log("warn", str(tag), str(msg))
+        return 0
+
+    @staticmethod
+    def e(tag: str, msg: Any, exc: Any = None) -> int:
+        text = f"{msg}: {exc}" if exc is not None else str(msg)
+        _ayu_runtime_host.log("error", str(tag), text)
+        return 0
+
+
+class ColorBridge:
+    _ayu_bridged = True
+    BLACK = 0xFF000000
+    DKGRAY = 0xFF444444
+    GRAY = 0xFF888888
+    LTGRAY = 0xFFCCCCCC
+    WHITE = 0xFFFFFFFF
+    RED = 0xFFFF0000
+    GREEN = 0xFF00FF00
+    BLUE = 0xFF0000FF
+    YELLOW = 0xFFFFFF00
+    CYAN = 0xFF00FFFF
+    MAGENTA = 0xFFFF00FF
+    TRANSPARENT = 0x00000000
+
+    @staticmethod
+    def argb(a: int, r: int, g: int, b: int) -> int:
+        return ((int(a) & 0xFF) << 24) | ((int(r) & 0xFF) << 16) | ((int(g) & 0xFF) << 8) | (int(b) & 0xFF)
+
+    @staticmethod
+    def rgb(r: int, g: int, b: int) -> int:
+        return ColorBridge.argb(255, r, g, b)
+
+    @staticmethod
+    def alpha(color: int) -> int:
+        return (int(color) >> 24) & 0xFF
+
+    @staticmethod
+    def red(color: int) -> int:
+        return (int(color) >> 16) & 0xFF
+
+    @staticmethod
+    def green(color: int) -> int:
+        return (int(color) >> 8) & 0xFF
+
+    @staticmethod
+    def blue(color: int) -> int:
+        return int(color) & 0xFF
+
+    @staticmethod
+    def parseColor(color_str: str) -> int:
+        s = str(color_str or "").strip()
+        if s.startswith("#"):
+            raw = s[1:]
+            if len(raw) == 6:
+                return int("FF" + raw, 16)
+            if len(raw) == 8:
+                return int(raw, 16)
+        return ColorBridge.WHITE
+
+
+class LooperBridge:
+    _ayu_bridged = True
+
+    @staticmethod
+    def getMainLooper() -> "LooperBridge":
+        return LooperBridge()
+
+
+class HandlerBridge:
+    _ayu_bridged = True
+
+    def __init__(self, _looper: Any = None) -> None:
+        pass
+
+    def post(self, fn: Any) -> bool:
+        if callable(fn):
+            fn()
+        return True
+
+    def postDelayed(self, fn: Any, delay_ms: int | float = 0) -> bool:
+        if callable(fn):
+            delay_s = max(0.0, float(delay_ms) / 1000.0)
+            if delay_s > 0:
+                t = threading.Timer(delay_s, fn)
+                t.daemon = True
+                t.start()
+            else:
+                fn()
+        return True
+
+
+class ChatObjectBridge:
+    _ayu_bridged = True
+
+    @staticmethod
+    def isChannel(chat: Any) -> bool:
+        if isinstance(chat, dict):
+            return bool(chat.get("broadcast") or chat.get("is_channel") or int(chat.get("id", 0) or 0) < -1_000_000_000_000)
+        return False
+
+    @staticmethod
+    def isMegagroup(chat: Any) -> bool:
+        return bool(isinstance(chat, dict) and chat.get("megagroup"))
+
+    @staticmethod
+    def canSendMessages(_chat: Any) -> bool:
+        return True
+
+
+class UserObjectBridge:
+    _ayu_bridged = True
+
+    @staticmethod
+    def getUserName(user: Any) -> str:
+        if isinstance(user, dict):
+            first = str(user.get("first_name", "") or "")
+            last = str(user.get("last_name", "") or "")
+            return (first + " " + last).strip() or str(user.get("username", "") or "")
+        first = str(getattr(user, "first_name", "") or "")
+        last = str(getattr(user, "last_name", "") or "")
+        return (first + " " + last).strip() or str(getattr(user, "username", "") or "")
+
+    @staticmethod
+    def isUserSelf(user: Any) -> bool:
+        uid = user.get("id") if isinstance(user, dict) else getattr(user, "id", None)
+        return int(uid or -1) == int(_ayu_runtime_host.get_current_account().get("id", 0) or -2)
+
+
+class SendMessageParamsBridge(_ayu_runtime_host.HookParams):
+    _ayu_bridged = True
+
+    @staticmethod
+    def of(*args: Any, **kwargs: Any) -> _ayu_runtime_host.HookParams:
+        payload = _ayu_runtime_host.HookParams(kwargs)
+        if args and "message" not in payload:
+            payload["message"] = str(args[0])
+        if len(args) > 1 and "peer_id" not in payload:
+            payload["peer_id"] = args[1]
+        return payload
+
+
+class JSONObjectBridge(dict):
+    _ayu_bridged = True
+
+    def __init__(self, source: Any = None) -> None:
+        if isinstance(source, str):
+            super().__init__(json.loads(source) if source.strip() else {})
+        elif isinstance(source, dict):
+            super().__init__(source)
+        else:
+            super().__init__()
+
+    def getString(self, key: str) -> str:
+        return str(self[key])
+
+    def optString(self, key: str, default: str = "") -> str:
+        return str(self.get(key, default))
+
+    def getInt(self, key: str) -> int:
+        return int(self[key])
+
+    def optInt(self, key: str, default: int = 0) -> int:
+        return int(self.get(key, default))
+
+    def getBoolean(self, key: str) -> bool:
+        return bool(self[key])
+
+    def optBoolean(self, key: str, default: bool = False) -> bool:
+        return bool(self.get(key, default))
+
+    def put(self, key: str, val: Any) -> "JSONObjectBridge":
+        self[key] = val
+        return self
+
+    def has(self, key: str) -> bool:
+        return key in self
+
+    def toString(self) -> str:
+        return json.dumps(self)
+
+
+class JSONArrayBridge(list):
+    _ayu_bridged = True
+
+    def __init__(self, source: Any = None) -> None:
+        if isinstance(source, str):
+            super().__init__(json.loads(source) if source.strip() else [])
+        elif isinstance(source, (list, tuple)):
+            super().__init__(source)
+        else:
+            super().__init__()
+
+    def length(self) -> int:
+        return len(self)
+
+    def get(self, index: int) -> Any:
+        return self[index]
+
+    def put(self, val: Any) -> "JSONArrayBridge":
+        self.append(val)
+        return self
+
+    def toString(self) -> str:
+        return json.dumps(self)
+
+
+class RunnableBridge:
+    _ayu_bridged = True
+
+    def __init__(self, fn: Any = None) -> None:
+        self._fn = fn
+
+    def run(self) -> None:
+        if callable(self._fn):
+            self._fn()
+
+
 _BRIDGED_CLASSES: dict[str, Any] = {
     "org.telegram.messenger.UserConfig": UserConfigBridge,
     "org.telegram.messenger.MessagesController": MessagesControllerBridge,
     "org.telegram.messenger.SendMessagesHelper": SendMessagesHelperBridge,
+    "org.telegram.messenger.SendMessagesHelper$SendMessageParams": SendMessageParamsBridge,
     "org.telegram.messenger.ConnectionsManager": ConnectionsManagerBridge,
     "org.telegram.messenger.NotificationCenter": NotificationCenterBridge,
     "org.telegram.messenger.LocaleController": LocaleControllerBridge,
     "org.telegram.messenger.ApplicationLoader": ApplicationLoaderBridge,
     "org.telegram.messenger.AndroidUtilities": AndroidUtilitiesBridge,
     "org.telegram.messenger.SharedConfig": SharedConfigBridge,
+    "org.telegram.messenger.FileLog": FileLogBridge,
+    "org.telegram.messenger.ChatObject": ChatObjectBridge,
+    "org.telegram.messenger.UserObject": UserObjectBridge,
     "org.telegram.ui.Components.BulletinFactory": BulletinFactoryBridge,
     "org.telegram.ui.ActionBar.AlertDialog": AlertDialogBuilderBridge,
     "org.telegram.ui.ActionBar.AlertDialog$Builder": AlertDialogBuilderBridge,
     "org.telegram.ui.ActionBar.Theme": ThemeBridge,
+    "org.telegram.ui.ActionBar.BaseFragment": LaunchActivityBridge,
     "org.telegram.ui.LaunchActivity": LaunchActivityBridge,
     "org.telegram.tgnet.TLRPC": _TLRPCNamespace,
+    "org.json.JSONObject": JSONObjectBridge,
+    "org.json.JSONArray": JSONArrayBridge,
     "android.widget.Toast": ToastBridge,
     "android.content.ClipboardManager": ClipboardManagerBridge,
     "android.content.ClipData": ClipDataBridge,
@@ -595,6 +861,11 @@ _BRIDGED_CLASSES: dict[str, Any] = {
     "android.net.Uri": UriBridge,
     "android.os.Build": BuildBridge,
     "android.os.Build$VERSION": BuildVersionBridge,
+    "android.os.Handler": HandlerBridge,
+    "android.os.Looper": LooperBridge,
+    "android.graphics.Color": ColorBridge,
+    "android.util.Log": AndroidLogBridge,
+    "java.lang.Runnable": RunnableBridge,
     "java.lang.String": str,
     "java.lang.Integer": int,
     "java.lang.Long": int,
@@ -616,3 +887,79 @@ def resolve_bridged_class(class_name: str) -> Any | None:
     if name.startswith("org.telegram.tgnet.TLRPC$"):
         return _make_tl_class(name)
     return None
+
+
+_JAVA_IMPORT_ROOTS = frozenset({
+    "org",
+    "android",
+    "androidx",
+    "com",
+    "java",
+    "javax",
+    "kotlin",
+    "kotlinx",
+    "dalvik",
+    "de",
+})
+
+
+class _JavaPackageModule:
+    def __init__(self, fullname: str) -> None:
+        self.__name__ = fullname
+        self.__package__ = fullname
+        self.__path__ = []
+        self.__all__: list[str] = []
+
+    def __getattr__(self, item: str) -> Any:
+        if item.startswith("__"):
+            raise AttributeError(item)
+        full = f"{self.__name__}.{item}"
+        resolved = resolve_bridged_class(full)
+        if resolved is not None:
+            return resolved
+        # Also allow nested TL classes `from org.telegram.tgnet.TLRPC import TL_users_getFullUser`.
+        dollar = f"{self.__name__}${item}"
+        resolved_dollar = resolve_bridged_class(dollar)
+        if resolved_dollar is not None:
+            return resolved_dollar
+        sub = _JavaPackageModule(full)
+        sys.modules.setdefault(full, sub)
+        return sub
+
+
+class _JavaPackageLoader(importlib.abc.Loader):
+    def create_module(self, spec):
+        if spec.name in sys.modules:
+            return sys.modules[spec.name]
+        mod = _JavaPackageModule(spec.name)
+        mod.__spec__ = spec
+        return mod
+
+    def exec_module(self, module) -> None:
+        pass
+
+
+class _JavaPackageFinder(importlib.abc.MetaPathFinder):
+    _loader = _JavaPackageLoader()
+
+    def find_spec(self, fullname: str, path=None, target=None):
+        root = fullname.split(".", 1)[0]
+        if root not in _JAVA_IMPORT_ROOTS:
+            return None
+        if fullname == "java" or fullname.startswith("java."):
+            # Let our real `PythonSDK/java/__init__.py` package handle `from java import jclass`.
+            if fullname == "java":
+                return None
+        return importlib.util.spec_from_loader(fullname, self._loader, is_package=True)
+
+
+_FINDER_INSTALLED = False
+
+
+def install_java_import_hook() -> None:
+    global _FINDER_INSTALLED
+    if _FINDER_INSTALLED:
+        return
+    _FINDER_INSTALLED = True
+    sys.meta_path.append(_JavaPackageFinder())
+

@@ -8,6 +8,7 @@ import TelegramPresentationData
 import PresentationDataUtils
 import ItemListUI
 import SGStrings
+import SGPluginBridge
 import UndoUI
 
 // MARK: - Plugin File Picker
@@ -316,12 +317,13 @@ private enum PluginDetailEntry: ItemListNodeEntry {
     case reloadAction(Int, String)
     case viewSourceAction(Int, String)
     case removeAction(Int, String)
+    case menuAction(Int, AyuPluginMenuItem)
 
     var section: ItemListSectionId {
         switch self {
         case .infoHeader, .enableToggle, .infoText, .diagnosticText:
             return 0
-        case .settingHeader, .settingSwitch, .settingInput, .settingSelector, .settingSlider, .settingAction, .settingDivider:
+        case .settingHeader, .settingSwitch, .settingInput, .settingSelector, .settingSlider, .settingAction, .settingDivider, .menuAction:
             return 1
         case .reloadAction, .viewSourceAction, .removeAction:
             return 2
@@ -466,6 +468,17 @@ private enum PluginDetailEntry: ItemListNodeEntry {
                 style: .blocks,
                 action: { args.remove() }
             )
+        case let .menuAction(_, menuItem):
+            return ItemListActionItem(
+                presentationData: presentationData,
+                systemStyle: .glass,
+                title: menuItem.text,
+                kind: .generic,
+                alignment: .natural,
+                sectionId: self.section,
+                style: .blocks,
+                action: { args.triggerMenu(menuItem) }
+            )
         }
     }
 }
@@ -476,6 +489,7 @@ private final class PluginDetailArguments {
     let pickSelector: (AyuPluginSettingItemModel) -> Void
     let editSlider: (AyuPluginSettingItemModel) -> Void
     let triggerAction: (String) -> Void
+    let triggerMenu: (AyuPluginMenuItem) -> Void
     let reload: () -> Void
     let viewSource: () -> Void
     let remove: () -> Void
@@ -486,6 +500,7 @@ private final class PluginDetailArguments {
         pickSelector: @escaping (AyuPluginSettingItemModel) -> Void,
         editSlider: @escaping (AyuPluginSettingItemModel) -> Void,
         triggerAction: @escaping (String) -> Void,
+        triggerMenu: @escaping (AyuPluginMenuItem) -> Void,
         reload: @escaping () -> Void,
         viewSource: @escaping () -> Void,
         remove: @escaping () -> Void
@@ -495,6 +510,7 @@ private final class PluginDetailArguments {
         self.pickSelector = pickSelector
         self.editSlider = editSlider
         self.triggerAction = triggerAction
+        self.triggerMenu = triggerMenu
         self.reload = reload
         self.viewSource = viewSource
         self.remove = remove
@@ -574,6 +590,19 @@ public func ayuPluginDetailController(context: AccountContext, pluginId: String)
         triggerAction: { actionId in
             SGPluginEngine.shared.triggerSettingAction(pluginId: pluginId, actionId: actionId)
         },
+        triggerMenu: { item in
+            let accountId = context.account.peerId.toInt64()
+            let menuCtx = AyuPluginMenuContext(
+                account: accountId,
+                peerId: accountId,
+                messageId: 0,
+                senderId: accountId,
+                text: "",
+                isOutgoing: true,
+                date: Int32(Date().timeIntervalSince1970)
+            )
+            SGPluginEngine.shared.triggerMenuItem(pluginId: item.pluginId, itemId: item.itemId, context: menuCtx)
+        },
         reload: {
             SGPluginEngine.shared.reloadPlugin(pluginId) { _ in
                 refreshSchema()
@@ -650,6 +679,13 @@ public func ayuPluginDetailController(context: AccountContext, pluginId: String)
                 default:
                     entries.append(.settingDivider(baseId, item.text))
                 }
+            }
+        }
+
+        let pluginMenuActions = SGPluginEngine.shared.menuItems(for: "").filter { $0.pluginId == pluginId }
+        if !pluginMenuActions.isEmpty {
+            for (idx, item) in pluginMenuActions.enumerated() {
+                entries.append(.menuAction(500 + idx, item))
             }
         }
 
