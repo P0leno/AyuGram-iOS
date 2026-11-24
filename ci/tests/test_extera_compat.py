@@ -170,7 +170,7 @@ __id__ = "jclass_only"
 
 class JClassPlugin(BasePlugin):
     def on_plugin_load(self):
-        jclass("org.telegram.messenger.UserConfig")
+        jclass("android.media.AudioRecord")
 """
         with tempfile.TemporaryDirectory() as tmp:
             p1 = self._write_plugin(Path(tmp), "android_only.plugin", android_plugin)
@@ -213,6 +213,78 @@ class ImportCompatPlugin(BasePlugin):
             res = _ayu_runtime_host.load_plugin("import_compat", str(p))
             self.assertTrue(res["ok"], res)
             self.assertFalse(res["incompatible"])
+
+    def test_smart_java_bridge_and_message_menu_items(self) -> None:
+        self.backend.account["id"] = 4242
+        self.backend.active_chat = {"peer_id": -1009988, "account": 4242}
+        plugin_src = """
+from base_plugin import BasePlugin, MenuItemData, MenuItemType
+from java import jclass
+from client_utils import get_last_fragment
+
+__id__ = "smart_bridge"
+__name__ = "Smart Bridge Test"
+__version__ = "1.0"
+
+class SmartBridgePlugin(BasePlugin):
+    def on_plugin_load(self):
+        self.AndroidUtilities = jclass("org.telegram.messenger.AndroidUtilities")
+        self.BulletinFactory = jclass("org.telegram.ui.Components.BulletinFactory")
+        self.ApplicationLoader = jclass("org.telegram.messenger.ApplicationLoader")
+        self.UserConfig = jclass("org.telegram.messenger.UserConfig")
+        self.TLRPC = jclass("org.telegram.tgnet.TLRPC")
+        self.Toast = jclass("android.widget.Toast")
+
+        prefs = self.ApplicationLoader.applicationContext.getSharedPreferences("cfg", 0)
+        prefs.edit().putString("prefix", "OK:").putBoolean("flag", True).apply()
+        self.saved_prefix = prefs.getString("prefix", "")
+        self.user_id = self.UserConfig.getInstance(0).getClientUserId()
+
+        frag = get_last_fragment()
+        self.active_dialog = frag.getDialogId() if frag else 0
+
+        self.add_menu_item(MenuItemData(
+            menu_type=MenuItemType.MESSAGE_CONTEXT_MENU,
+            text="Copy With Prefix",
+            on_click=self.on_menu_click,
+        ))
+
+    def on_menu_click(self, context):
+        out = f"{self.saved_prefix}{context.text}:{context.peer_id}"
+        self.AndroidUtilities.addToClipboard(out)
+        self.BulletinFactory.global_().createSuccessBulletin(out).show()
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._write_plugin(Path(tmp), "smart_bridge.plugin", plugin_src)
+            load_res = _ayu_runtime_host.load_plugin("smart_bridge", str(p))
+            self.assertTrue(load_res["ok"], load_res)
+            self.assertFalse(load_res["incompatible"])
+
+            entry = _ayu_runtime_host._PLUGINS["smart_bridge"]["instance"]
+            self.assertEqual(entry.saved_prefix, "OK:")
+            self.assertEqual(entry.user_id, 4242)
+            self.assertEqual(entry.active_dialog, -1009988)
+
+            menu_resp = json.loads(
+                _ayu_runtime_host.dispatch_json("list_menu_items", json.dumps({"menu_type": "message_context_menu"}))
+            )
+            self.assertTrue(menu_resp["ok"])
+            self.assertEqual(len(menu_resp["items"]), 1)
+            item_id = menu_resp["items"][0]["item_id"]
+
+            trig_resp = json.loads(
+                _ayu_runtime_host.dispatch_json(
+                    "trigger_menu_item",
+                    json.dumps({
+                        "plugin_id": "smart_bridge",
+                        "item_id": item_id,
+                        "context": {"peer_id": 777, "message_id": 12, "text": "hello"},
+                    }),
+                )
+            )
+            self.assertTrue(trig_resp["ok"], trig_resp)
+            self.assertEqual(self.backend.clipboard[-1], "OK:hello:777")
+            self.assertEqual(self.backend.bulletins[-1], ("", "OK:hello:777", "success"))
 
 
 if __name__ == "__main__":

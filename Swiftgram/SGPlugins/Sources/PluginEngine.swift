@@ -90,6 +90,8 @@ public final class SGPluginEngine: NSObject, AyuPluginHost, AyuPythonNativeDeleg
     private weak var activeContext: AccountContext?
     private var records: [AyuPluginRecord] = []
     private var loadedIds: Set<String> = []
+    private var cachedMenuItems: [AyuPluginMenuItem] = []
+    private var activeChatPeerId: Int64 = 0
     private var logs: [AyuPluginLogEntry] = []
     private var started = false
 
@@ -240,6 +242,77 @@ public final class SGPluginEngine: NSObject, AyuPluginHost, AyuPythonNativeDeleg
         self.startIfNeeded()
     }
 
+    public func setActiveChat(peerId: Int64?) {
+        self.stateLock.lock()
+        self.activeChatPeerId = peerId ?? 0
+        self.stateLock.unlock()
+    }
+
+    public func menuItems(for menuType: String) -> [AyuPluginMenuItem] {
+        let target = menuType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        self.stateLock.lock()
+        let result = self.cachedMenuItems.filter { target.isEmpty || $0.menuType == target }
+        self.stateLock.unlock()
+        return result
+    }
+
+    public func triggerMenuItem(pluginId: String, itemId: String, context: AyuPluginMenuContext) {
+        guard !self.isSafeModeEnabled, self.hasActivePlugins, self.runtime.isInitialized else {
+            return
+        }
+        self.pythonQueue.async { [weak self] in
+            guard let self else {
+                return
+            }
+            var ctxPayload: [String: Any] = [
+                "account": context.account,
+                "peer_id": context.peerId,
+                "message_id": context.messageId,
+                "sender_id": context.senderId ?? 0,
+                "text": context.text,
+                "message": context.text,
+                "out": context.isOutgoing,
+                "date": context.date,
+            ]
+            if context.messageId != 0 {
+                ctxPayload["id"] = context.messageId
+            }
+            let _ = self.dispatchPython(
+                command: "trigger_menu_item",
+                payload: [
+                    "plugin_id": pluginId,
+                    "item_id": itemId,
+                    "context": ctxPayload,
+                ]
+            )
+        }
+    }
+
+    private func refreshMenuItemsSync() {
+        let response = self.dispatchPython(command: "list_menu_items", payload: [:])
+        let rawItems = response["items"] as? [[String: Any]] ?? []
+        let parsed: [AyuPluginMenuItem] = rawItems.compactMap { row in
+            guard let pluginId = row["plugin_id"] as? String,
+                  let itemId = row["item_id"] as? String,
+                  let menuType = row["menu_type"] as? String,
+                  let text = row["text"] as? String,
+                  !text.isEmpty else {
+                return nil
+            }
+            return AyuPluginMenuItem(
+                pluginId: pluginId,
+                itemId: itemId,
+                menuType: menuType.lowercased(),
+                text: text,
+                subtext: row["subtext"] as? String ?? "",
+                icon: row["icon"] as? String ?? ""
+            )
+        }
+        self.stateLock.lock()
+        self.cachedMenuItems = parsed
+        self.stateLock.unlock()
+    }
+
     private func ensureRuntimeInitializedLocked() -> Bool {
         if self.runtime.isInitialized {
             return true
@@ -283,6 +356,7 @@ public final class SGPluginEngine: NSObject, AyuPluginHost, AyuPythonNativeDeleg
             }
             self.stateLock.lock()
             self.loadedIds.removeAll()
+            self.cachedMenuItems.removeAll()
             self.stateLock.unlock()
             self.postStateChanged()
         }
@@ -342,6 +416,7 @@ public final class SGPluginEngine: NSObject, AyuPluginHost, AyuPythonNativeDeleg
         }
         self.saveManifestLocked()
         self.stateLock.unlock()
+        self.refreshMenuItemsSync()
         return updated
     }
 
@@ -374,6 +449,7 @@ public final class SGPluginEngine: NSObject, AyuPluginHost, AyuPythonNativeDeleg
                 self.stateLock.lock()
                 self.loadedIds.remove(pluginId)
                 self.stateLock.unlock()
+                self.refreshMenuItemsSync()
             }
 
             self.postStateChanged()
@@ -404,6 +480,7 @@ public final class SGPluginEngine: NSObject, AyuPluginHost, AyuPythonNativeDeleg
                 try? FileManager.default.removeItem(at: self.scriptsDirectory.appendingPathComponent(removed.fileName))
             }
             try? FileManager.default.removeItem(at: self.settingsURL(for: pluginId))
+            self.refreshMenuItemsSync()
             self.postStateChanged()
         }
     }
@@ -925,6 +1002,9 @@ public final class SGPluginEngine: NSObject, AyuPluginHost, AyuPythonNativeDeleg
     }
 
     public func pythonExecuteRequest(withMethod method: String, paramsJSON: String) -> String {
+        if method.hasPrefix("__ayu_native.") {
+            return self.handleInternalNativeMethod(method, paramsJSON: paramsJSON)
+        }
         guard let account = self.activeContext?.account else {
             return "{\"ok\":false,\"error\":\"No active Telegram account\"}"
         }
@@ -937,6 +1017,66 @@ public final class SGPluginEngine: NSObject, AyuPluginHost, AyuPythonNativeDeleg
         let _ = semaphore.wait(timeout: .now() + .seconds(8))
         disposable.dispose()
         return responseJSON
+    }
+
+    private func handleInternalNativeMethod(_ method: String, paramsJSON: String) -> String {
+        let paramsData = paramsJSON.data(using: .utf8) ?? Data()
+        let params = (try? JSONSerialization.jsonObject(with: paramsData)) as? [String: Any] ?? [:]
+
+        func encode(_ obj: [String: Any]) -> String {
+            guard JSONSerialization.isValidJSONObject(obj),
+                  let data = try? JSONSerialization.data(withJSONObject: obj, options: []),
+                  let str = String(data: data, encoding: .utf8) else {
+                return "{\"ok\":false}"
+            }
+            return str
+        }
+
+        switch method {
+        case "__ayu_native.copy_to_clipboard":
+            let text = params["text"] as? String ?? ""
+            DispatchQueue.main.async {
+                UIPasteboard.general.string = text
+            }
+            return encode(["ok": true])
+
+        case "__ayu_native.open_url":
+            let raw = params["url"] as? String ?? ""
+            guard let url = URL(string: raw) else {
+                return encode(["ok": false, "error": "Invalid URL"])
+            }
+            DispatchQueue.main.async {
+                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            }
+            return encode(["ok": true])
+
+        case "__ayu_native.get_active_chat":
+            self.stateLock.lock()
+            let peerId = self.activeChatPeerId
+            self.stateLock.unlock()
+            let accountId = self.activeContext?.account.peerId.toInt64() ?? 0
+            return encode([
+                "ok": true,
+                "result": [
+                    "peer_id": peerId,
+                    "account": accountId,
+                ],
+            ])
+
+        case "__ayu_native.get_plugin_data_dir":
+            self.ensureDirectories()
+            let dataDir = self.rootDirectory.appendingPathComponent("data", isDirectory: true)
+            if !FileManager.default.fileExists(atPath: dataDir.path) {
+                try? FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
+            }
+            return encode([
+                "ok": true,
+                "result": ["path": dataDir.path],
+            ])
+
+        default:
+            return encode(["ok": false, "error": "Unknown native bridge method"])
+        }
     }
 
     public func pythonGetCurrentAccountJSON() -> String {

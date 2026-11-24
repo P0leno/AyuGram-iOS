@@ -8083,6 +8083,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         
         if let peerId = self.chatLocation.peerId {
             NotificationCenter.default.post(name: Notification.Name("AyuGramChatOpened"), object: nil, userInfo: ["peerId": peerId])
+            AyuPluginBridge.shared.setActiveChat(peerId: peerId.toInt64())
         }
         
         self.chatDisplayNode.historyNode.experimentalSnapScrollToItem = false

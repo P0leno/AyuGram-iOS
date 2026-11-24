@@ -17,6 +17,11 @@ def _unsupported(api_name: str, detail: str = "") -> JavaNotSupportedError:
 
 
 def find_class(class_name: str, class_loader: Any = None) -> Any:
+    from _java_bridge import resolve_bridged_class
+
+    bridged = resolve_bridged_class(class_name)
+    if bridged is not None:
+        return bridged
     raise _unsupported("hook_utils.find_class", str(class_name))
 
 
@@ -48,27 +53,55 @@ def unhook_method(_handle: Any) -> None:
     return None
 
 
-def get_private_field(_obj: Any, field_name: str) -> Any:
+def _is_bridged_target(obj: Any) -> bool:
+    return isinstance(obj, dict) or getattr(obj, "_ayu_bridged", False)
+
+
+def get_private_field(obj: Any, field_name: str) -> Any:
+    if _is_bridged_target(obj):
+        if isinstance(obj, dict):
+            return obj.get(field_name)
+        if hasattr(obj, field_name):
+            return getattr(obj, field_name)
     raise _unsupported("hook_utils.get_private_field", str(field_name))
 
 
-def set_private_field(_obj: Any, field_name: str, _value: Any) -> None:
+def set_private_field(obj: Any, field_name: str, value: Any) -> None:
+    if _is_bridged_target(obj):
+        if isinstance(obj, dict):
+            obj[field_name] = value
+            return
+        setattr(obj, field_name, value)
+        return
     raise _unsupported("hook_utils.set_private_field", str(field_name))
 
 
 def get_static_field(clazz: Any, field_name: str) -> Any:
+    if _is_bridged_target(clazz) and hasattr(clazz, field_name):
+        return getattr(clazz, field_name)
     raise _unsupported("hook_utils.get_static_field", f"{clazz}.{field_name}")
 
 
-def set_static_field(clazz: Any, field_name: str, _value: Any) -> None:
+def set_static_field(clazz: Any, field_name: str, value: Any) -> None:
+    if _is_bridged_target(clazz):
+        setattr(clazz, field_name, value)
+        return
     raise _unsupported("hook_utils.set_static_field", f"{clazz}.{field_name}")
 
 
-def call_private_method(_obj: Any, method_name: str, *_args: Any) -> Any:
+def call_private_method(obj: Any, method_name: str, *args: Any) -> Any:
+    if _is_bridged_target(obj) and hasattr(obj, method_name):
+        fn = getattr(obj, method_name)
+        if callable(fn):
+            return fn(*args)
     raise _unsupported("hook_utils.call_private_method", str(method_name))
 
 
-def call_static_method(clazz: Any, method_name: str, *_args: Any) -> Any:
+def call_static_method(clazz: Any, method_name: str, *args: Any) -> Any:
+    if _is_bridged_target(clazz) and hasattr(clazz, method_name):
+        fn = getattr(clazz, method_name)
+        if callable(fn):
+            return fn(*args)
     raise _unsupported("hook_utils.call_static_method", f"{clazz}.{method_name}")
 
 

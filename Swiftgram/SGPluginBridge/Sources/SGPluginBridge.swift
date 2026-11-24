@@ -78,6 +78,59 @@ public struct AyuIncomingMessageEvent: Codable, Equatable {
     }
 }
 
+public struct AyuPluginMenuItem: Equatable {
+    public var pluginId: String
+    public var itemId: String
+    public var menuType: String
+    public var text: String
+    public var subtext: String
+    public var icon: String
+
+    public init(
+        pluginId: String,
+        itemId: String,
+        menuType: String,
+        text: String,
+        subtext: String = "",
+        icon: String = ""
+    ) {
+        self.pluginId = pluginId
+        self.itemId = itemId
+        self.menuType = menuType
+        self.text = text
+        self.subtext = subtext
+        self.icon = icon
+    }
+}
+
+public struct AyuPluginMenuContext: Equatable {
+    public var account: Int64
+    public var peerId: Int64
+    public var messageId: Int32
+    public var senderId: Int64?
+    public var text: String
+    public var isOutgoing: Bool
+    public var date: Int32
+
+    public init(
+        account: Int64,
+        peerId: Int64,
+        messageId: Int32,
+        senderId: Int64? = nil,
+        text: String,
+        isOutgoing: Bool,
+        date: Int32
+    ) {
+        self.account = account
+        self.peerId = peerId
+        self.messageId = messageId
+        self.senderId = senderId
+        self.text = text
+        self.isOutgoing = isOutgoing
+        self.date = date
+    }
+}
+
 public protocol AyuPluginHost: AnyObject {
     var hasActivePlugins: Bool { get }
     var activePluginCount: Int { get }
@@ -85,6 +138,9 @@ public protocol AyuPluginHost: AnyObject {
 
     func startIfNeeded()
     func bindAccountContext(_ context: AnyObject)
+    func setActiveChat(peerId: Int64?)
+    func menuItems(for menuType: String) -> [AyuPluginMenuItem]
+    func triggerMenuItem(pluginId: String, itemId: String, context: AyuPluginMenuContext)
     func processOutgoingMessage(_ params: AyuSendHookParams) -> AyuSendHookOutcome
     func dispatchIncomingMessages(_ events: [AyuIncomingMessageEvent])
     func installPlugin(fromFileURL url: URL, presentationContext: AnyObject?)
@@ -147,6 +203,24 @@ public final class AyuPluginBridge {
 
     public func bindAccountContext(_ context: AnyObject) {
         self.currentHost()?.bindAccountContext(context)
+    }
+
+    public func setActiveChat(peerId: Int64?) {
+        self.currentHost()?.setActiveChat(peerId: peerId)
+    }
+
+    public func menuItems(for menuType: String) -> [AyuPluginMenuItem] {
+        guard let host = self.currentHost(), host.hasActivePlugins, !host.isSafeModeEnabled else {
+            return []
+        }
+        return host.menuItems(for: menuType)
+    }
+
+    public func triggerMenuItem(pluginId: String, itemId: String, context: AyuPluginMenuContext) {
+        guard let host = self.currentHost(), host.hasActivePlugins, !host.isSafeModeEnabled else {
+            return
+        }
+        host.triggerMenuItem(pluginId: pluginId, itemId: itemId, context: context)
     }
 
     public func processOutgoingMessage(_ params: AyuSendHookParams) -> AyuSendHookOutcome {

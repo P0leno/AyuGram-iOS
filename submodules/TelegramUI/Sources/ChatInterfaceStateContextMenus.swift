@@ -1,6 +1,7 @@
 import SGSettingsUI
 import SGStrings
 import SGSimpleSettings
+import SGPluginBridge
 import PeerInfoUI
 import Foundation
 import UIKit
@@ -2492,6 +2493,30 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
             }
         } else if let messageReadStatsAreHidden = infoSummaryData.messageReadStatsAreHidden, !messageReadStatsAreHidden {
             canViewStats = canViewReadStats(message: message, participantCount: infoSummaryData.participantCount, isMessageRead: isMessageRead, isPremium: isPremium, appConfig: appConfig)
+        }
+
+        let pluginMenuItems = AyuPluginBridge.shared.menuItems(for: "message_context_menu")
+        if !pluginMenuItems.isEmpty {
+            if !actions.isEmpty {
+                actions.append(.separator)
+            }
+            for pluginItem in pluginMenuItems {
+                let menuContext = AyuPluginMenuContext(
+                    account: context.account.peerId.toInt64(),
+                    peerId: message.id.peerId.toInt64(),
+                    messageId: message.id.id,
+                    senderId: message.author?.id.toInt64(),
+                    text: message.text,
+                    isOutgoing: !message.flags.contains(.Incoming),
+                    date: message.timestamp
+                )
+                actions.append(.action(ContextMenuActionItem(text: pluginItem.text, icon: { theme in
+                    return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Settings"), color: theme.actionSheet.primaryTextColor)
+                }, action: { _, f in
+                    f(.default)
+                    AyuPluginBridge.shared.triggerMenuItem(pluginId: pluginItem.pluginId, itemId: pluginItem.itemId, context: menuContext)
+                })))
+            }
         }
 
         // MARK: Swiftgram

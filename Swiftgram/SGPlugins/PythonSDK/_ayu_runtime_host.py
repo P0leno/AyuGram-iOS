@@ -59,6 +59,9 @@ class _DefaultFallbackNativeBackend:
         self.alerts: list[tuple[str, str, str]] = []
         self.sent_messages: list[dict[str, Any]] = []
         self.requests: list[tuple[str, dict[str, Any]]] = []
+        self.clipboard: list[str] = []
+        self.opened_urls: list[str] = []
+        self.active_chat: dict[str, Any] = {"peer_id": 0, "account": 0}
         self.account: dict[str, Any] = {
             "id": 0,
             "first_name": "AyuGram",
@@ -90,6 +93,16 @@ class _DefaultFallbackNativeBackend:
 
     def execute_request(self, method: str, params_json: str) -> str:
         payload = json.loads(params_json) if params_json else {}
+        if method == "__ayu_native.copy_to_clipboard":
+            self.clipboard.append(str(payload.get("text", "")))
+            return json.dumps({"ok": True})
+        if method == "__ayu_native.open_url":
+            self.opened_urls.append(str(payload.get("url", "")))
+            return json.dumps({"ok": True})
+        if method == "__ayu_native.get_active_chat":
+            return json.dumps({"ok": True, "result": self.active_chat})
+        if method == "__ayu_native.get_plugin_data_dir":
+            return json.dumps({"ok": True, "result": {"path": "/tmp/ayu_plugin_data"}})
         self.requests.append((method, payload))
         return json.dumps({"ok": True, "method": method, "result": {}})
 
@@ -207,6 +220,37 @@ def get_current_account() -> dict[str, Any]:
         return json.loads(raw) if raw else {}
     except Exception:
         return {}
+
+
+def get_current_plugin_id() -> str | None:
+    with _LOCK:
+        return _CURRENT_LOADING_ID
+
+
+def copy_to_clipboard(text: str) -> bool:
+    res = execute_request("__ayu_native.copy_to_clipboard", {"text": str(text or "")})
+    return bool(res.get("ok", False))
+
+
+def open_url(url: str) -> bool:
+    res = execute_request("__ayu_native.open_url", {"url": str(url or "")})
+    return bool(res.get("ok", False))
+
+
+def get_active_chat() -> dict[str, Any]:
+    res = execute_request("__ayu_native.get_active_chat", {})
+    if res.get("ok") and isinstance(res.get("result"), dict):
+        return dict(res["result"])
+    return {}
+
+
+def get_plugin_data_dir() -> str:
+    res = execute_request("__ayu_native.get_plugin_data_dir", {})
+    if res.get("ok") and isinstance(res.get("result"), dict):
+        path = str(res["result"].get("path") or "")
+        if path:
+            return path
+    return "/tmp/ayu_plugin_data"
 
 
 def record_current_incompatibility(message: str) -> None:
@@ -525,6 +569,65 @@ def trigger_setting_action(plugin_id: str, action_id: str) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+def list_menu_items(menu_type: str | None = None) -> list[dict[str, Any]]:
+    """Collect active plugin menu items (optionally filtered by `menu_type`)."""
+    items: list[dict[str, Any]] = []
+    target_type = str(menu_type).strip().lower() if menu_type else None
+    for entry in _iter_active_entries():
+        plugin_id = entry["id"]
+        instance = entry["instance"]
+        raw_items = getattr(instance, "_ayu_menu_items", None) or []
+        for idx, item in enumerate(raw_items):
+            mtype = getattr(getattr(item, "menu_type", None), "value", str(getattr(item, "menu_type", ""))).lower()
+            if target_type and mtype != target_type:
+                continue
+            item_id = getattr(item, "item_id", "") or f"{plugin_id}_menu_{idx}"
+            if not getattr(item, "item_id", ""):
+                item.item_id = item_id
+            items.append({
+                "plugin_id": plugin_id,
+                "item_id": item_id,
+                "menu_type": mtype,
+                "text": str(getattr(item, "text", "") or ""),
+                "subtext": str(getattr(item, "subtext", "") or ""),
+                "icon": str(getattr(item, "icon", "") or ""),
+                "priority": int(getattr(item, "priority", 0) or 0),
+            })
+    items.sort(key=lambda x: (-x["priority"], x["plugin_id"], x["item_id"]))
+    return items
+
+
+def trigger_menu_item(plugin_id: str, item_id: str, context_dict: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Invoke a plugin's registered `MenuItemData.on_click(context)` handler."""
+    with _LOCK:
+        entry = _PLUGINS.get(plugin_id)
+    if entry is None:
+        return {"ok": False, "error": f"Plugin `{plugin_id}` is not loaded"}
+
+    instance = entry["instance"]
+    raw_items = getattr(instance, "_ayu_menu_items", None) or []
+    target_item = None
+    for idx, item in enumerate(raw_items):
+        candidate_id = getattr(item, "item_id", "") or f"{plugin_id}_menu_{idx}"
+        if candidate_id == item_id:
+            target_item = item
+            break
+
+    if target_item is None or not callable(getattr(target_item, "on_click", None)):
+        return {"ok": False, "error": f"Menu item `{item_id}` not found or not clickable"}
+
+    ctx = HookParams(context_dict or {})
+    try:
+        try:
+            target_item.on_click(ctx)
+        except TypeError:
+            target_item.on_click()
+        return {"ok": True}
+    except Exception as exc:
+        log("error", plugin_id, f"Menu item `{item_id}` failed: {exc}\n{traceback.format_exc()}")
+        return {"ok": False, "error": str(exc)}
+
+
 def list_loaded_plugins() -> list[dict[str, Any]]:
     with _LOCK:
         return [
@@ -568,6 +671,14 @@ def dispatch_json(command: str, payload_json: str) -> str:
             res = trigger_setting_action(payload["plugin_id"], payload["action_id"])
         elif command == "trigger_alert_callback":
             res = {"ok": trigger_alert_callback(payload["callback_id"])}
+        elif command == "list_menu_items":
+            res = {"ok": True, "items": list_menu_items(payload.get("menu_type"))}
+        elif command == "trigger_menu_item":
+            res = trigger_menu_item(
+                payload["plugin_id"],
+                payload["item_id"],
+                dict(payload.get("context") or {}),
+            )
         elif command == "list_loaded_plugins":
             res = {"ok": True, "plugins": list_loaded_plugins()}
         else:

@@ -182,9 +182,53 @@ class _GenericClientShim:
         return lambda *_args, **_kwargs: None
 
 
+class _FragmentShim:
+    _ayu_bridged = True
+
+    def __init__(self, chat_info: dict[str, Any]) -> None:
+        self._chat_info = dict(chat_info)
+        self.dialog_id = int(chat_info.get("peer_id", 0) or 0)
+        self.chat_id = self.dialog_id
+
+    def getDialogId(self) -> int:
+        return self.dialog_id
+
+    def getCurrentAccount(self) -> int:
+        return int(self._chat_info.get("account", 0) or 0)
+
+    def getParentActivity(self):
+        return None
+
+    def getContext(self):
+        from _java_bridge import ApplicationLoaderBridge
+
+        return ApplicationLoaderBridge.applicationContext
+
+    def getMessagesController(self):
+        return get_messages_controller(self.getCurrentAccount())
+
+    def getSendMessagesHelper(self):
+        return get_send_messages_helper(self.getCurrentAccount())
+
+
 def get_last_fragment():
-    """Return active Android BaseFragment if present (None on iOS)."""
+    """Return active chat fragment shim if a chat is currently open, else None."""
+    chat_info = _ayu_runtime_host.get_active_chat()
+    if chat_info and int(chat_info.get("peer_id", 0) or 0) != 0:
+        return _FragmentShim(chat_info)
     return None
+
+
+def get_active_chat() -> dict[str, Any]:
+    return _ayu_runtime_host.get_active_chat()
+
+
+def copy_to_clipboard(text: str) -> bool:
+    return _ayu_runtime_host.copy_to_clipboard(str(text or ""))
+
+
+def open_url(url: str) -> bool:
+    return _ayu_runtime_host.open_url(str(url or ""))
 
 
 def get_current_fragment():

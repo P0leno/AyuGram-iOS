@@ -1,8 +1,12 @@
-"""Pure-Python / iOS compatibility shims for Android/Java Xposed hooks."""
+"""Pure-Python / iOS Smart Bridge shims for Android/Java `jclass` and Xposed hooks."""
+
+from __future__ import annotations
+
+from typing import Any
 
 
 class JavaNotSupportedError(RuntimeError):
-    """Raised when an Android plugin invokes JVM/ART class reflection unsupported on iOS."""
+    """Raised when an Android plugin invokes an unbridged JVM/ART reflection API."""
 
 
 def _report_jvm_usage(api_name: str, detail: str = "") -> None:
@@ -19,28 +23,34 @@ def _report_jvm_usage(api_name: str, detail: str = "") -> None:
 
 
 def jclass(class_name: str):
-    """Stub replacing `from java import jclass` with an explicit iOS diagnostic."""
+    """Resolve `from java import jclass` via Smart iOS Bridge for supported Telegram/Android classes."""
+    from _java_bridge import resolve_bridged_class
+
+    bridged = resolve_bridged_class(class_name)
+    if bridged is not None:
+        return bridged
+
     _report_jvm_usage("java.jclass", class_name)
     raise JavaNotSupportedError(
         f"Cannot resolve Java class '{class_name}' on iOS. "
         "Plugins relying on Android Java/Telegram Xposed hooks cannot run on iOS; "
-        "only pure-Python plugins using standard exteraCompat APIs are supported."
+        "only pure-Python or Smart-Bridged plugins are supported."
     )
 
 
 def dynamic_proxy(*_interfaces):
-    """Stub replacing `java.dynamic_proxy`."""
-    _report_jvm_usage("java.dynamic_proxy")
-    raise JavaNotSupportedError("java.dynamic_proxy is Android-only and unsupported on iOS.")
+    """Create a lightweight callable/attribute-tolerant Python proxy class for Android listener interfaces."""
+
+    class _DynamicProxyBase:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    return _DynamicProxyBase
 
 
 def cast(_target_type, value):
-    """Stub replacing `java.cast`."""
-    _report_jvm_usage("java.cast")
     return value
 
 
 def jarray(_element_type):
-    """Stub replacing `java.jarray`."""
-    _report_jvm_usage("java.jarray")
-    raise JavaNotSupportedError("java.jarray is Android-only and unsupported on iOS.")
+    return lambda *items: list(items)
