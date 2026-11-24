@@ -158,5 +158,14 @@ class BuildOutputTests(unittest.TestCase):
             '[1 / 9] Compiling A\n', 'ERROR: Build did NOT complete successfully\n',
         ])
 
+
+class ParallelismTests(unittest.TestCase):
+    def test_github_actions_uses_conservative_defaults(self):
+        self.assertEqual(ci.bazel_parallelism({'GITHUB_ACTIONS': 'true'}, cpu_count=10, mem_bytes=16 * 1024 ** 3), (2, 1))
+
+    def test_local_m4_scales_jobs_and_swift_workers(self):
+        self.assertEqual(ci.bazel_parallelism({}, cpu_count=10, mem_bytes=16 * 1024 ** 3), (8, 2))
+        self.assertEqual(ci.bazel_parallelism({'AYUGRAM_BAZEL_JOBS': '6', 'AYUGRAM_SWIFT_WORKERS': '3'}, cpu_count=10, mem_bytes=16 * 1024 ** 3), (6, 3))
+
 if __name__ == '__main__':
     unittest.main()

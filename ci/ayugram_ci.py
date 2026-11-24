@@ -129,6 +129,37 @@ def cleanup(source):
         (source / relative).unlink(missing_ok=True)
 
 
+def _host_memory_bytes():
+    try:
+        return int(os.sysconf('SC_PAGE_SIZE')) * int(os.sysconf('SC_PHYS_PAGES'))
+    except (ValueError, OSError, AttributeError):
+        return 0
+
+
+def bazel_parallelism(env, cpu_count=None, mem_bytes=None):
+    """Keep GitHub Actions conservative while letting local Apple Silicon use more cores."""
+    is_gha = str(env.get('GITHUB_ACTIONS', '')).strip().lower() == 'true'
+    cpus = cpu_count if cpu_count is not None else (os.cpu_count() or 2)
+    ram = mem_bytes if mem_bytes is not None else _host_memory_bytes()
+    if env.get('AYUGRAM_BAZEL_JOBS', '').strip():
+        jobs = max(1, int(env['AYUGRAM_BAZEL_JOBS'].strip()))
+    elif is_gha:
+        jobs = 2
+    else:
+        jobs = min(8, max(2, cpus - 2))
+    if env.get('AYUGRAM_SWIFT_WORKERS', '').strip():
+        swift_workers = max(1, int(env['AYUGRAM_SWIFT_WORKERS'].strip()))
+    elif is_gha:
+        swift_workers = 1
+    elif ram >= 32 * 1024 ** 3:
+        swift_workers = 4
+    elif ram >= 16 * 1024 ** 3 - (512 * 1024 ** 2):
+        swift_workers = 2
+    else:
+        swift_workers = 1
+    return jobs, swift_workers
+
+
 def save_manifest(path, manifest):
     path.write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
 
@@ -189,22 +220,26 @@ def build(source, ci, output, env):
         # .bazelrc applies to BOTH project generation and the full Bazel build.
         # disable_legacy_signing is supported by the pinned rules_apple submodule.
         # Do not disable extensions: preserve Swiftgram's application functionality.
+        jobs, swift_workers = bazel_parallelism(env)
+        print(f'Bazel parallelism: jobs={jobs}, SwiftCompile={swift_workers}', flush=True)
         rc_path.write_bytes(original_rc + b'\n# Temporary AyuGram unsigned CI settings\n'
                             # Make.py clears PATH before invoking Bazel. Genrules
                             # need Homebrew's ccache for TDLib's CMake launchers.
                             b'build --action_env=PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\n'
                             b'build --//Telegram:disableProvisioningProfiles=true\n'
                             b'build --features=disable_legacy_signing\n'
-                            b'build --jobs=2\n'
-                            b'build --worker_max_instances=SwiftCompile=1\n'
-                            # A module with many warnings can exceed Bazel's 1 MB output cap,
-                            # which hides its compile errors from the log.
-                            b'build --experimental_ui_max_stdouterr_bytes=-1\n'
-                            # Each new Xcode adds warnings, and with -warnings-as-errors one
-                            # module failing hides the errors of every module above it until
-                            # the next run. rules_swift applies its copt setting after a target's
-                            # copts, so this wins (Bazel 9 has no native --swiftcopt).
-                            b'build --@build_bazel_rules_swift//swift:copt=-no-warnings-as-errors\n')
+                            + f'build --jobs={jobs}\n'.encode('ascii')
+                            + f'build --worker_max_instances=SwiftCompile={swift_workers}\n'.encode('ascii')
+                            + (
+                                b'# A module with many warnings can exceed Bazel\'s 1 MB output cap,\n'
+                                b'# which hides its compile errors from the log.\n'
+                                b'build --experimental_ui_max_stdouterr_bytes=-1\n'
+                                b'# Each new Xcode adds warnings, and with -warnings-as-errors one\n'
+                                b'# module failing hides the errors of every module above it until\n'
+                                b'# the next run. rules_swift applies its copt setting after a target\'s\n'
+                                b'# copts, so this wins (Bazel 9 has no native --swiftcopt).\n'
+                                b'build --@build_bazel_rules_swift//swift:copt=-no-warnings-as-errors\n'
+                            ))
         # Let the repository download and checksum its own Bazel, not brew's latest.
         sys.path.insert(0, str(source / 'build-system/Make'))
         from BazelLocation import locate_bazel, calculate_sha256
