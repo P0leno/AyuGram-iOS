@@ -16,7 +16,7 @@ struct AppBadge: Identifiable, Hashable {
     let assetName: String
 }
 
-private final class CustomBadgeImagePicker: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+fileprivate final class CustomBadgeImagePicker: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
     var onPick: ((UIImage) -> Void)?
 
     func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
@@ -80,7 +80,7 @@ struct AppBadgeSettingsView: View {
     @State var customShowIcon: Bool = ayuCustomBadgeSettings().showIcon
     @State var hasCustomImage: Bool = ayuHasCustomBadgeImage()
     @State var previewRevision: Int = 0
-    @State var imagePickerHelper = CustomBadgeImagePicker()
+    @State private var imagePickerHelper = CustomBadgeImagePicker()
 
     private enum Layout {
         static let cardCorner: CGFloat = 12
