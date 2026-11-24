@@ -65,10 +65,11 @@ else
 fi
 
 SDK_PATH="$(xcrun --sdk $PLATFORM --show-sdk-path 2>/dev/null)"
+APPLE_CLANG="$(xcrun --sdk $PLATFORM --find clang 2>/dev/null || command -v clang)"
 
 mkdir -p "${INTERDIR}"
 
-./configure --disable-shared --enable-static --with-pic --disable-extra-programs --disable-doc --disable-asm --enable-intrinsics ${EXTRA_CONFIG} \
+CC="${APPLE_CLANG}" ./configure --disable-shared --enable-static --with-pic --disable-extra-programs --disable-doc --disable-asm --enable-intrinsics ${EXTRA_CONFIG} \
   --prefix="${INTERDIR}" \
   LDFLAGS="$LDFLAGS ${OPT_LDFLAGS} -fPIE -miphoneos-version-min=${MINIOSVERSION} -L${OUTPUTDIR}/lib" \
   CFLAGS="$CFLAGS ${EXTRA_CFLAGS} ${OPT_CFLAGS} -fPIE -miphoneos-version-min=${MINIOSVERSION} -I${OUTPUTDIR}/include -isysroot ${SDK_PATH}" \
