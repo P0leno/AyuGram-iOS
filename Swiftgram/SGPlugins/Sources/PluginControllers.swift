@@ -345,7 +345,8 @@ private enum PluginDetailEntry: ItemListNodeEntry {
              let .settingDivider(id, _),
              let .reloadAction(id, _),
              let .viewSourceAction(id, _),
-             let .removeAction(id, _):
+             let .removeAction(id, _),
+             let .menuAction(id, _):
             return id
         }
     }
