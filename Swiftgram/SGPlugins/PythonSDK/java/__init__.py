@@ -1,4 +1,4 @@
-"""Pure-Python / iOS Smart Bridge shims for Android/Java `jclass` and Xposed hooks."""
+"""Pure-Python / iOS Smart Bridge shims for Android/Java `jclass` and primitives."""
 
 from __future__ import annotations
 
@@ -54,3 +54,38 @@ def cast(_target_type, value):
 
 def jarray(_element_type):
     return lambda *items: list(items)
+
+
+def jint(value: Any) -> int:
+    val = int(value)
+    if val < -2147483648 or val > 2147483647:
+        raise OverflowError(f"Value {val} out of signed 32-bit int range")
+    return val
+
+
+def jlong(value: Any) -> int:
+    return int(value)
+
+
+def jshort(value: Any) -> int:
+    return int(value)
+
+
+def jbyte(value: Any) -> int:
+    return int(value)
+
+
+def jfloat(value: Any) -> float:
+    return float(value)
+
+
+def jdouble(value: Any) -> float:
+    return float(value)
+
+
+def jboolean(value: Any) -> bool:
+    return bool(value)
+
+
+def jchar(value: Any) -> str:
+    return str(value)[:1]

@@ -332,6 +332,90 @@ class PkgHookPlugin(BasePlugin):
             self.assertEqual(hook_res["action"], "modify")
             self.assertEqual(hook_res["params"]["message"], "[HOOK] ping")
 
+    def test_textutils_join_uri_and_elyx_package_support(self) -> None:
+        import json
+        import zipfile
+
+        bp_src = """
+from base_plugin import BasePlugin, MethodHook, hook_filters, HookFilter
+from hook_utils import find_class
+from java.lang import CharSequence, Thread, Integer
+from java.util import ArrayList
+from android.net import Uri
+from org.telegram.messenger import AndroidUtilities
+
+__id__ = "bp_test"
+__name__ = "BP Test"
+__version__ = "1.0"
+
+class JoinHook(MethodHook):
+    @hook_filters(HookFilter.ArgumentEqual(0, " "))
+    def before_hooked_method(self, param):
+        ok_stack = any(e.getClassName().startswith("org.telegram.messenger.DispatchQueue") and e.getMethodName() == "run" for e in Thread.currentThread().getStackTrace())
+        if not ok_stack:
+            return
+        out = ArrayList()
+        for seq in param.args[1].toArray():
+            if isinstance(seq, CharSequence):
+                u = Uri.parse(str(seq))
+                if AndroidUtilities.getHostAuthority(str(u)) == "x.com":
+                    out.add(u.buildUpon().authority("fixupx.com").build())
+                    continue
+            out.add(seq)
+        param.args[1] = out
+
+class BPPlugin(BasePlugin):
+    def on_plugin_load(self):
+        tu = find_class("android.text.TextUtils")
+        m = tu.getClass().getDeclaredMethod("join", CharSequence.getClass(), find_class("java.lang.Iterable").getClass())
+        self.hook_method(m, JoinHook())
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            orig_exec = self.backend.execute_request
+            self.backend.execute_request = lambda m, p: (
+                json.dumps({"ok": True, "result": {"path": str(tmp_path / "data")}})
+                if m == "__ayu_native.get_plugin_data_dir"
+                else orig_exec(m, p)
+            )
+            try:
+                bp_file = self._write_plugin(tmp_path, "bp_test.plugin", bp_src)
+                bp_res = _ayu_runtime_host.load_plugin("bp_test", str(bp_file))
+                self.assertTrue(bp_res["ok"], bp_res)
+
+                hook_res = _ayu_runtime_host.dispatch_send_message_hook(
+                    0, {"message": "check https://x.com/test/status/1", "peer_id": 1}
+                )
+                self.assertEqual(hook_res["action"], "modify")
+                self.assertEqual(hook_res["params"]["message"], "check https://fixupx.com/test/status/1")
+
+                elyx_path = tmp_path / "sample_lib.elyx"
+                with zipfile.ZipFile(elyx_path, "w") as zf:
+                    zf.writestr("metainfo.yml", 'id: sample_lib\nname: Sample Lib\nauthor: "@dev"\nversion: "1.2.0"\n')
+                    zf.writestr("refmap.yml", "metainfo: metainfo.yml\nmain: src/main.py\n")
+                    zf.writestr("__init__.py", "from .src.api import helper\n")
+                    zf.writestr("src/__init__.py", "")
+                    zf.writestr("src/api.py", "def helper():\n    return 42\n")
+                    zf.writestr(
+                        "src/main.py",
+                        "from base_plugin import BasePlugin\n"
+                        "from packaging.version import Version\n"
+                        "from typing_extensions import deprecated\n"
+                        "from extera_utils.classes import Base, joverride\n"
+                        "class SamplePlugin(BasePlugin):\n"
+                        "    def on_plugin_load(self):\n"
+                        "        self.ver_ok = Version('3.1.0') >= Version('3.0.0')\n",
+                    )
+                el_res = _ayu_runtime_host.load_plugin("sample_lib", str(elyx_path))
+                self.assertTrue(el_res["ok"], el_res)
+                self.assertEqual(el_res["metadata"]["name"], "Sample Lib")
+                self.assertTrue(_ayu_runtime_host._PLUGINS["sample_lib"]["instance"].ver_ok)
+                import sample_lib  # noqa: PLC0415
+
+                self.assertEqual(sample_lib.helper(), 42)
+            finally:
+                self.backend.execute_request = orig_exec
+
 
 if __name__ == "__main__":
     unittest.main()

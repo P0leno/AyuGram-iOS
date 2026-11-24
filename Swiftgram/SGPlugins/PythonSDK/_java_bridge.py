@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from abc import ABCMeta
 import importlib.abc
 import importlib.util
 import json
 import os
 import sys
 import threading
+import urllib.parse
+from collections.abc import Iterable as _PyIterable
 from pathlib import Path
 from typing import Any
 
@@ -250,6 +253,15 @@ class NotificationCenterBridge:
         return client_utils.get_notification_center()
 
 
+class _LocaleInfoShim:
+    _ayu_bridged = True
+    shortName = "en"
+    langCode = "en"
+    pluralLangCode = "en"
+    name = "English"
+    nameEnglish = "English"
+
+
 class LocaleControllerBridge:
     _ayu_bridged = True
     isRTL = False
@@ -257,6 +269,10 @@ class LocaleControllerBridge:
     @staticmethod
     def getInstance() -> type["LocaleControllerBridge"]:
         return LocaleControllerBridge
+
+    @staticmethod
+    def getCurrentLocaleInfo() -> _LocaleInfoShim:
+        return _LocaleInfoShim()
 
     @staticmethod
     def getString(key: Any, res_id: Any = None) -> str:
@@ -320,6 +336,14 @@ class AndroidUtilitiesBridge:
     @staticmethod
     def openUrl(_context: Any, url: str) -> bool:
         return _ayu_runtime_host.open_url(str(url or ""))
+
+    @staticmethod
+    def getHostAuthority(url: str) -> str | None:
+        raw = str(url or "").strip()
+        if not raw:
+            return None
+        parsed = urllib.parse.urlsplit(raw if "://" in raw else f"https://{raw}")
+        return parsed.netloc or None
 
 
 class _BulletinHandle:
@@ -404,6 +428,25 @@ class AlertDialogBuilderBridge:
         self._inner.show()
         return self
 
+    BUTTON_POSITIVE = -1
+    BUTTON_NEGATIVE = -2
+    BUTTON_NEUTRAL = -3
+
+    class OnButtonClickListener:
+        pass
+
+    class OnClickListener:
+        pass
+
+    class OnCancelListener:
+        pass
+
+    class OnDismissListener:
+        pass
+
+
+AlertDialogBuilderBridge.Builder = AlertDialogBuilderBridge
+
 
 class ToastBridge:
     _ayu_bridged = True
@@ -443,12 +486,56 @@ class ClipboardManagerBridge:
         _ayu_runtime_host.copy_to_clipboard(str(text or ""))
 
 
+class _UriBuilder:
+    _ayu_bridged = True
+
+    def __init__(self, split: urllib.parse.SplitResult) -> None:
+        self._scheme = split.scheme
+        self._netloc = split.netloc
+        self._path = split.path
+        self._query = split.query
+        self._fragment = split.fragment
+
+    def scheme(self, value: str) -> "_UriBuilder":
+        self._scheme = str(value or "")
+        return self
+
+    def authority(self, value: str) -> "_UriBuilder":
+        self._netloc = str(value or "")
+        return self
+
+    def path(self, value: str) -> "_UriBuilder":
+        self._path = str(value or "")
+        return self
+
+    def build(self) -> "_UriObject":
+        return _UriObject(
+            urllib.parse.urlunsplit((self._scheme, self._netloc, self._path, self._query, self._fragment))
+        )
+
+
+class _UriObject(str):
+    _ayu_bridged = True
+
+    def buildUpon(self) -> _UriBuilder:
+        return _UriBuilder(urllib.parse.urlsplit(str(self)))
+
+    def getHost(self) -> str | None:
+        return urllib.parse.urlsplit(str(self)).hostname
+
+    def getScheme(self) -> str:
+        return urllib.parse.urlsplit(str(self)).scheme
+
+    def toString(self) -> str:
+        return str(self)
+
+
 class UriBridge:
     _ayu_bridged = True
 
     @staticmethod
-    def parse(url: str) -> str:
-        return str(url or "")
+    def parse(url: str) -> _UriObject:
+        return _UriObject(str(url or ""))
 
 
 class IntentBridge:
@@ -535,6 +622,9 @@ class _ArrayListShim(list):
 
     def get(self, index: int) -> Any:
         return self[index]
+
+    def toArray(self) -> list[Any]:
+        return list(self)
 
 
 class _HashMapShim(dict):
@@ -812,6 +902,9 @@ class JSONArrayBridge(list):
     def get(self, index: int) -> Any:
         return self[index]
 
+    def toArray(self) -> list[Any]:
+        return list(self)
+
     def put(self, val: Any) -> "JSONArrayBridge":
         self.append(val)
         return self
@@ -831,6 +924,197 @@ class RunnableBridge:
             self._fn()
 
 
+class _ReflectedMember:
+    _ayu_bridged = True
+
+    def __init__(self, owner_name: str, member_name: str, is_constructor: bool = False) -> None:
+        self.owner_name = owner_name
+        self.member_name = member_name
+        self.is_constructor = is_constructor
+
+    def getName(self) -> str:
+        return self.member_name
+
+    def getDeclaringClass(self) -> "_JavaClassDescriptor":
+        return _JavaClassDescriptor(self.owner_name, None)
+
+    def getParameterTypes(self) -> list[Any]:
+        return []
+
+    def setAccessible(self, _flag: bool) -> None:
+        return None
+
+
+class _JavaClassDescriptor:
+    _ayu_bridged = True
+
+    def __init__(self, class_name: str, py_obj: Any = None) -> None:
+        self.class_name = class_name
+        self.py_obj = py_obj
+
+    def getName(self) -> str:
+        return self.class_name
+
+    def getSimpleName(self) -> str:
+        return self.class_name.rsplit(".", 1)[-1].rsplit("$", 1)[-1]
+
+    def getClass(self) -> "_JavaClassDescriptor":
+        return self
+
+    def getDeclaredMethod(self, name: str, *_param_types: Any) -> _ReflectedMember:
+        return _ReflectedMember(self.class_name, str(name))
+
+    def getMethod(self, name: str, *_param_types: Any) -> _ReflectedMember:
+        return _ReflectedMember(self.class_name, str(name))
+
+    def getDeclaredMethods(self) -> list[_ReflectedMember]:
+        if self.class_name == "org.telegram.messenger.LocaleController":
+            return [_ReflectedMember(self.class_name, "applyLanguage")]
+        return []
+
+    def getMethods(self) -> list[_ReflectedMember]:
+        return self.getDeclaredMethods()
+
+
+class _StackTraceElementShim:
+    _ayu_bridged = True
+
+    def __init__(self, class_name: str, method_name: str) -> None:
+        self._class_name = class_name
+        self._method_name = method_name
+
+    def getClassName(self) -> str:
+        return self._class_name
+
+    def getMethodName(self) -> str:
+        return self._method_name
+
+
+class _ThreadShim:
+    _ayu_bridged = True
+
+    @staticmethod
+    def currentThread() -> "_ThreadShim":
+        return _ThreadShim()
+
+    def getStackTrace(self) -> list[_StackTraceElementShim]:
+        return [
+            _StackTraceElementShim("java.lang.Thread", "getStackTrace"),
+            _StackTraceElementShim("dalvik.system.VMStack", "getThreadStackTrace"),
+            _StackTraceElementShim("org.telegram.messenger.DispatchQueue", "run"),
+        ]
+
+
+class _IntegerBridge(int):
+    _ayu_bridged = True
+    TYPE = int
+
+    @classmethod
+    def getClass(cls) -> _JavaClassDescriptor:
+        return _JavaClassDescriptor("java.lang.Integer", cls)
+
+    @staticmethod
+    def valueOf(val: Any) -> int:
+        return int(val)
+
+    @staticmethod
+    def parseInt(val: Any, radix: int = 10) -> int:
+        return int(str(val), radix)
+
+
+class _CharSequenceMeta(ABCMeta):
+    def getClass(cls) -> _JavaClassDescriptor:
+        return _JavaClassDescriptor("java.lang.CharSequence", cls)
+
+
+class _CharSequenceBridge(metaclass=_CharSequenceMeta):
+    _ayu_bridged = True
+
+
+_CharSequenceBridge.register(str)
+
+
+class _IterableBridge:
+    _ayu_bridged = True
+
+    @classmethod
+    def getClass(cls) -> _JavaClassDescriptor:
+        return _JavaClassDescriptor("java.lang.Iterable", cls)
+
+
+class _ObjectBridge:
+    _ayu_bridged = True
+
+    @classmethod
+    def getClass(cls) -> _JavaClassDescriptor:
+        return _JavaClassDescriptor("java.lang.Object", cls)
+
+
+class _ClassBridge(_JavaClassDescriptor):
+    pass
+
+
+class TextUtilsBridge:
+    _ayu_bridged = True
+
+    @classmethod
+    def getClass(cls) -> _JavaClassDescriptor:
+        return _JavaClassDescriptor("android.text.TextUtils", cls)
+
+    @staticmethod
+    def join(delimiter: Any, tokens: Any) -> str:
+        return str(delimiter).join(str(x) for x in tokens)
+
+    @staticmethod
+    def isEmpty(text: Any) -> bool:
+        return not text
+
+
+class BundleBridge(dict):
+    _ayu_bridged = True
+
+    def putString(self, k: str, v: Any) -> None:
+        self[str(k)] = None if v is None else str(v)
+
+    def getString(self, k: str, default: str | None = None) -> str | None:
+        val = self.get(str(k), default)
+        return None if val is None else str(val)
+
+    def putInt(self, k: str, v: int) -> None:
+        self[str(k)] = int(v)
+
+    def getInt(self, k: str, default: int = 0) -> int:
+        return int(self.get(str(k), default))
+
+    def putBoolean(self, k: str, v: bool) -> None:
+        self[str(k)] = bool(v)
+
+    def getBoolean(self, k: str, default: bool = False) -> bool:
+        return bool(self.get(str(k), default))
+
+
+class UtilitiesBridge:
+    _ayu_bridged = True
+
+    class Callback:
+        _ayu_bridged = True
+
+    class Callback2:
+        _ayu_bridged = True
+
+    @classmethod
+    def getClass(cls) -> _JavaClassDescriptor:
+        return _JavaClassDescriptor("org.telegram.messenger.Utilities", cls)
+
+
+def _attach_get_class(cls_obj: Any, full_name: str) -> None:
+    if isinstance(cls_obj, type) and not hasattr(cls_obj, "getClass"):
+        try:
+            cls_obj.getClass = classmethod(lambda c, _n=full_name: _JavaClassDescriptor(_n, c))
+        except Exception:
+            pass
+
+
 _BRIDGED_CLASSES: dict[str, Any] = {
     "org.telegram.messenger.UserConfig": UserConfigBridge,
     "org.telegram.messenger.MessagesController": MessagesControllerBridge,
@@ -845,6 +1129,7 @@ _BRIDGED_CLASSES: dict[str, Any] = {
     "org.telegram.messenger.FileLog": FileLogBridge,
     "org.telegram.messenger.ChatObject": ChatObjectBridge,
     "org.telegram.messenger.UserObject": UserObjectBridge,
+    "org.telegram.messenger.Utilities": UtilitiesBridge,
     "org.telegram.ui.Components.BulletinFactory": BulletinFactoryBridge,
     "org.telegram.ui.ActionBar.AlertDialog": AlertDialogBuilderBridge,
     "org.telegram.ui.ActionBar.AlertDialog$Builder": AlertDialogBuilderBridge,
@@ -854,6 +1139,7 @@ _BRIDGED_CLASSES: dict[str, Any] = {
     "org.telegram.tgnet.TLRPC": _TLRPCNamespace,
     "org.json.JSONObject": JSONObjectBridge,
     "org.json.JSONArray": JSONArrayBridge,
+    "android.text.TextUtils": TextUtilsBridge,
     "android.widget.Toast": ToastBridge,
     "android.content.ClipboardManager": ClipboardManagerBridge,
     "android.content.ClipData": ClipDataBridge,
@@ -861,22 +1147,35 @@ _BRIDGED_CLASSES: dict[str, Any] = {
     "android.net.Uri": UriBridge,
     "android.os.Build": BuildBridge,
     "android.os.Build$VERSION": BuildVersionBridge,
+    "android.os.Bundle": BundleBridge,
     "android.os.Handler": HandlerBridge,
     "android.os.Looper": LooperBridge,
     "android.graphics.Color": ColorBridge,
     "android.util.Log": AndroidLogBridge,
+    "java.lang.Object": _ObjectBridge,
+    "java.lang.Class": _ClassBridge,
+    "java.lang.CharSequence": _CharSequenceBridge,
+    "java.lang.Thread": _ThreadShim,
+    "java.lang.Iterable": _IterableBridge,
     "java.lang.Runnable": RunnableBridge,
     "java.lang.String": str,
-    "java.lang.Integer": int,
-    "java.lang.Long": int,
+    "java.lang.Integer": _IntegerBridge,
+    "java.lang.Long": _IntegerBridge,
     "java.lang.Float": float,
     "java.lang.Double": float,
     "java.lang.Boolean": bool,
     "java.lang.StringBuilder": _StringBuilderShim,
+    "java.lang.reflect.Member": _ReflectedMember,
+    "java.lang.reflect.Method": _ReflectedMember,
+    "java.lang.reflect.Constructor": _ReflectedMember,
     "java.util.ArrayList": _ArrayListShim,
     "java.util.HashMap": _HashMapShim,
+    "java.util.concurrent.ConcurrentHashMap": _HashMapShim,
     "java.io.File": _JavaFileShim,
 }
+
+for _b_name, _b_cls in _BRIDGED_CLASSES.items():
+    _attach_get_class(_b_cls, _b_name)
 
 
 def resolve_bridged_class(class_name: str) -> Any | None:
@@ -910,6 +1209,12 @@ class _JavaPackageModule:
         self.__path__ = []
         self.__all__: list[str] = []
 
+    def getClass(self) -> _JavaClassDescriptor:
+        return _JavaClassDescriptor(self.__name__, self)
+
+    def __call__(self, *_args: Any, **_kwargs: Any) -> "_JavaPackageModule":
+        return self
+
     def __getattr__(self, item: str) -> Any:
         if item.startswith("__"):
             raise AttributeError(item)
@@ -922,6 +1227,8 @@ class _JavaPackageModule:
         resolved_dollar = resolve_bridged_class(dollar)
         if resolved_dollar is not None:
             return resolved_dollar
+        if item == "CharSequence":
+            return _CharSequenceBridge
         sub = _JavaPackageModule(full)
         sys.modules.setdefault(full, sub)
         return sub
@@ -946,10 +1253,10 @@ class _JavaPackageFinder(importlib.abc.MetaPathFinder):
         root = fullname.split(".", 1)[0]
         if root not in _JAVA_IMPORT_ROOTS:
             return None
-        if fullname == "java" or fullname.startswith("java."):
-            # Let our real `PythonSDK/java/__init__.py` package handle `from java import jclass`.
-            if fullname == "java":
-                return None
+        if fullname in ("java", "java.chaquopy"):
+            return None
+        if fullname == "java.lang":
+            return importlib.util.spec_from_loader(fullname, self._loader, is_package=True)
         return importlib.util.spec_from_loader(fullname, self._loader, is_package=True)
 
 

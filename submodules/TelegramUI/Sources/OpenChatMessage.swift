@@ -239,7 +239,7 @@ func openChatMessageImpl(_ params: OpenChatMessageParams) -> Bool {
                     let controller = params.context.sharedContext.makeShareScreen(context: params.context, params: ShareControllerParams(subject: .media(.standalone(media: file), nil), immediateExternalShare: true))
                     params.present(controller, nil, .window(.root))
                 } else if let fileName = file.fileName,
-                          (fileName as NSString).pathExtension.lowercased() == "plugin",
+                          ["plugin", "elyx"].contains((fileName as NSString).pathExtension.lowercased()),
                           let path = params.context.engine.resources.completedResourcePath(id: EngineMediaResource.Id(file.resource.id)) {
                     let stagedURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
                     try? FileManager.default.removeItem(at: stagedURL)

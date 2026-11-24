@@ -2776,7 +2776,7 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             }
         }
         |> deliverOnMainQueue).start(next: { sharedContext, context, authContext in
-            if url.isFileURL && url.pathExtension.lowercased() == "plugin" {
+            if url.isFileURL && ["plugin", "elyx"].contains(url.pathExtension.lowercased()) {
                 AyuPluginBridge.shared.startIfNeeded()
                 if let context {
                     AyuPluginBridge.shared.bindAccountContext(context.context)

@@ -478,6 +478,7 @@ public final class SGPluginEngine: NSObject, AyuPluginHost, AyuPythonNativeDeleg
 
             if let removed = removed {
                 try? FileManager.default.removeItem(at: self.scriptsDirectory.appendingPathComponent(removed.fileName))
+                try? FileManager.default.removeItem(at: self.scriptsDirectory.appendingPathComponent("ElyxPlugins/\(pluginId)"))
             }
             try? FileManager.default.removeItem(at: self.settingsURL(for: pluginId))
             self.refreshMenuItemsSync()
@@ -490,7 +491,14 @@ public final class SGPluginEngine: NSObject, AyuPluginHost, AyuPythonNativeDeleg
             return ""
         }
         let url = self.scriptsDirectory.appendingPathComponent(record.fileName)
-        return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        if let text = try? String(contentsOf: url, encoding: .utf8) {
+            return text
+        }
+        let unpackedMain = self.scriptsDirectory.appendingPathComponent("ElyxPlugins/\(pluginId)/src/main.py")
+        if let mainText = try? String(contentsOf: unpackedMain, encoding: .utf8) {
+            return mainText
+        }
+        return ""
     }
 
     public func fetchSettingsSchema(for pluginId: String, completion: @escaping ([AyuPluginSettingItemModel]) -> Void) {
@@ -587,12 +595,21 @@ public final class SGPluginEngine: NSObject, AyuPluginHost, AyuPythonNativeDeleg
                 url.stopAccessingSecurityScopedResource()
             }
         }
-        guard let sourceData = try? Data(contentsOf: url),
-              let sourceText = String(data: sourceData, encoding: .utf8) else {
+        guard let sourceData = try? Data(contentsOf: url), !sourceData.isEmpty else {
             self.presentSimpleAlert(title: nil, text: "Failed to read plugin file.")
             return
         }
+        let ext = url.pathExtension.lowercased()
+        let isZip = sourceData.starts(with: [0x50, 0x4B, 0x03, 0x04])
         let suggestedName = url.deletingPathExtension().lastPathComponent
+        if ext == "elyx" || isZip {
+            self.installPluginArchive(archiveData: sourceData, suggestedFileStem: suggestedName, presentationContext: presentationContext)
+            return
+        }
+        guard let sourceText = String(data: sourceData, encoding: .utf8) else {
+            self.presentSimpleAlert(title: nil, text: "Failed to read plugin file.")
+            return
+        }
         self.installPlugin(sourceText: sourceText, suggestedFileStem: suggestedName, presentationContext: presentationContext)
     }
 
@@ -601,16 +618,107 @@ public final class SGPluginEngine: NSObject, AyuPluginHost, AyuPythonNativeDeleg
             guard let self = self else {
                 return
             }
-            guard error == nil, let data = data, let text = String(data: data, encoding: .utf8), !text.isEmpty else {
+            guard error == nil, let data = data, !data.isEmpty else {
                 let message = error?.localizedDescription ?? "Download returned empty response"
                 self.presentSimpleAlert(title: nil, text: message)
                 return
             }
+            let ext = url.pathExtension.lowercased()
+            let isZip = data.starts(with: [0x50, 0x4B, 0x03, 0x04])
             let stem = url.deletingPathExtension().lastPathComponent
+            let cleanStem = stem.isEmpty ? "plugin" : stem
+            if ext == "elyx" || isZip {
+                DispatchQueue.main.async {
+                    self.installPluginArchive(archiveData: data, suggestedFileStem: cleanStem, presentationContext: presentationContext)
+                }
+                return
+            }
+            guard let text = String(data: data, encoding: .utf8), !text.isEmpty else {
+                self.presentSimpleAlert(title: nil, text: "Download returned invalid text")
+                return
+            }
             DispatchQueue.main.async {
-                self.installPlugin(sourceText: text, suggestedFileStem: stem.isEmpty ? "plugin" : stem, presentationContext: presentationContext)
+                self.installPlugin(sourceText: text, suggestedFileStem: cleanStem, presentationContext: presentationContext)
             }
         }.resume()
+    }
+
+    public func installPluginArchive(archiveData: Data, suggestedFileStem: String, presentationContext: AnyObject?) {
+        self.ensureDirectories()
+        let pid = self.sanitizedPluginId(from: suggestedFileStem)
+        let fileName = "\(pid).elyx"
+        let destURL = self.scriptsDirectory.appendingPathComponent(fileName)
+        let context = (presentationContext as? AccountContext) ?? self.activeContext
+
+        let commitInstall: () -> Void = { [weak self] in
+            guard let self else {
+                return
+            }
+            do {
+                try archiveData.write(to: destURL, options: .atomic)
+            } catch {
+                self.presentSimpleAlert(title: nil, text: error.localizedDescription)
+                return
+            }
+            let record = AyuPluginRecord(
+                id: pid,
+                fileName: fileName,
+                name: suggestedFileStem,
+                author: "Unknown",
+                version: "1.0",
+                descriptionText: ".elyx plugin package",
+                enabled: !self.isSafeModeEnabled
+            )
+            self.pythonQueue.async {
+                if !self.isSafeModeEnabled && self.ensureRuntimeInitializedLocked() {
+                    let updated = self.loadSinglePluginSync(record: record)
+                    self.postStateChanged()
+                    DispatchQueue.main.async {
+                        if let incompatible = updated.incompatibleReason {
+                            self.presentSimpleAlert(title: updated.name, text: incompatible)
+                        } else if let err = updated.lastError {
+                            self.presentSimpleAlert(title: updated.name, text: err)
+                        } else {
+                            let lang = context?.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode ?? "en"
+                            self.showBulletin(title: "", subtitle: "Ayu.Plugins.Installed".i18n(lang, args: updated.name), icon: "success")
+                        }
+                    }
+                } else {
+                    self.stateLock.lock()
+                    if let idx = self.records.firstIndex(where: { $0.id == record.id }) {
+                        self.records[idx] = record
+                    } else {
+                        self.records.append(record)
+                    }
+                    self.saveManifestLocked()
+                    self.stateLock.unlock()
+                    self.postStateChanged()
+                }
+            }
+        }
+
+        guard let context else {
+            commitInstall()
+            return
+        }
+        DispatchQueue.main.async {
+            let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+            let lang = presentationData.strings.baseLanguageCode
+            let title = "Ayu.Plugins.InstallConfirmTitle".i18n(lang)
+            let body = "\(suggestedFileStem) (.elyx)\n\n" + "Ayu.Plugins.InstallConfirmText".i18n(lang)
+            let alert = textAlertController(
+                context: context,
+                title: title,
+                text: body,
+                actions: [
+                    TextAlertAction(type: .genericAction, title: "Ayu.Plugins.InstallAction".i18n(lang), action: {
+                        commitInstall()
+                    }),
+                    TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_Cancel, action: {}),
+                ]
+            )
+            context.sharedContext.mainWindow?.present(alert, on: .root)
+        }
     }
 
     private func sanitizedPluginId(from stem: String) -> String {

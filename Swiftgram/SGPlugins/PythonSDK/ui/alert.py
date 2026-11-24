@@ -8,6 +8,10 @@ import _ayu_runtime_host
 class AlertDialogBuilder:
     """Fluent builder matching exteraGram `ui.alert.AlertDialogBuilder`."""
 
+    BUTTON_POSITIVE = -1
+    BUTTON_NEGATIVE = -2
+    BUTTON_NEUTRAL = -3
+
     def __init__(self, context=None, title: str = "", message: str = ""):
         self._context = context
         self._title = str(title) if title else ""

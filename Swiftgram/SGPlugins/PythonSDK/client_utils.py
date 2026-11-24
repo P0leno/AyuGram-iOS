@@ -126,7 +126,22 @@ def send_request(
     return invoke()
 
 
-def run_on_queue(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> threading.Thread:
+def run_on_queue(
+    fn: Callable[..., Any],
+    queue: Any = None,
+    delay: float = 0.0,
+    *args: Any,
+    **kwargs: Any,
+) -> threading.Thread:
+    _ = queue
+    delay_sec = float(delay or 0.0)
+    if delay_sec > 10.0:
+        delay_sec /= 1000.0
+    if delay_sec > 0.0:
+        timer = threading.Timer(delay_sec, fn, args=args, kwargs=kwargs)
+        timer.daemon = True
+        timer.start()
+        return timer  # type: ignore[return-value]
     thread = threading.Thread(target=fn, args=args, kwargs=kwargs, daemon=True)
     thread.start()
     return thread
@@ -147,6 +162,17 @@ __all__ = [
 GLOBAL_QUEUE = "global"
 STAGE_QUEUE = "stage"
 PLUGINS_QUEUE = "plugins"
+
+
+class NotificationCenterDelegate:
+    """Delegate base/helper matching exteraGram `client_utils.NotificationCenterDelegate`."""
+
+    def __init__(self, fn: Callable[..., Any] | None = None) -> None:
+        self._fn = fn
+
+    def didReceivedNotification(self, notification_id: int, account: int, *args: Any) -> None:
+        if callable(self._fn):
+            self._fn(notification_id, account, *args)
 
 
 class _NotificationCenterShim:
@@ -279,6 +305,7 @@ def run_on_ui_thread(fn, delay: float = 0.0) -> None:
 
 __all__ = list(globals().get("__all__", [])) + [
     "GLOBAL_QUEUE",
+    "NotificationCenterDelegate",
     "PLUGINS_QUEUE",
     "STAGE_QUEUE",
     "get_account_instance",

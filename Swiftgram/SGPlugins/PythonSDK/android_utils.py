@@ -43,10 +43,21 @@ class ApplicationLoader:
     applicationContext = None
 
 
+def copy_to_clipboard(text: Any) -> bool:
+    """Copy text to the iOS clipboard (`UIPasteboard`)."""
+    return _ayu_runtime_host.copy_to_clipboard(str(text or ""))
+
+
+def open_url(url: Any) -> bool:
+    return _ayu_runtime_host.open_url(str(url or ""))
+
+
 __all__ = [
     "ApplicationLoader",
     "OnClickListener",
     "R",
+    "copy_to_clipboard",
     "log",
+    "open_url",
     "run_on_ui_thread",
 ]

@@ -63,6 +63,44 @@ class MethodHook:
         return None
 
 
+XposedHook = MethodHook
+BaseHook = MethodHook
+
+
+class MethodReplacement(MethodHook):
+    pass
+
+
+class HookFilter:
+    """Compatibility filters matching exteraGram `@hook_filters(HookFilter.*)` decorators."""
+
+    @staticmethod
+    def ArgumentEqual(index: int, value: Any):
+        return ("eq", int(index), value)
+
+    @staticmethod
+    def ArgumentNotEqual(index: int, value: Any):
+        return ("ne", int(index), value)
+
+    @staticmethod
+    def ResultEqual(value: Any):
+        return ("res_eq", 0, value)
+
+    @staticmethod
+    def Condition(predicate: Callable[..., bool]):
+        return ("cond", 0, predicate)
+
+
+def hook_filters(*filters: Any):
+    """Attach filter metadata to a `MethodHook` method while wrapping check evaluation."""
+
+    def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        setattr(fn, "_ayu_hook_filters", list(filters))
+        return fn
+
+    return decorator
+
+
 def method_hook(*_args, **_kwargs):
     """Decorator compatibility helper."""
 
@@ -211,11 +249,16 @@ class BasePlugin:
 
 
 __all__ = [
+    "BaseHook",
     "BasePlugin",
+    "HookFilter",
     "HookResult",
     "HookStrategy",
     "MenuItemData",
     "MenuItemType",
     "MethodHook",
+    "MethodReplacement",
+    "XposedHook",
+    "hook_filters",
     "method_hook",
 ]

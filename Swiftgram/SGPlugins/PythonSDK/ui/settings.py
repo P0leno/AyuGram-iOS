@@ -139,7 +139,32 @@ class Text(SettingItem):
     red: bool = False
     subtext: str = ""
     on_long_click: Callable[..., Any] | None = None
+    create_sub_fragment: Callable[..., Any] | None = None
+    link_alias: str = ""
     item_type: str = field(default="text", init=False)
+
+    def __init__(
+        self,
+        text: str = "",
+        icon: str | None = None,
+        on_click: Callable[..., Any] | None = None,
+        accent: bool = False,
+        red: bool = False,
+        subtext: str = "",
+        on_long_click: Callable[..., Any] | None = None,
+        create_sub_fragment: Callable[..., Any] | None = None,
+        link_alias: str = "",
+        **_extra: Any,
+    ) -> None:
+        self.text = str(text)
+        self.icon = icon
+        self.on_click = on_click
+        self.accent = bool(accent)
+        self.red = bool(red)
+        self.subtext = str(subtext)
+        self.on_long_click = on_long_click
+        self.create_sub_fragment = create_sub_fragment
+        self.link_alias = str(link_alias)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -149,11 +174,28 @@ class Text(SettingItem):
             "accent": bool(self.accent),
             "red": bool(self.red),
             "subtext": str(self.subtext),
-            "clickable": self.on_click is not None,
+            "clickable": self.on_click is not None or self.create_sub_fragment is not None,
+        }
+
+
+class Custom(SettingItem):
+    item_type: str = "divider"
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.text = str(kwargs.get("text") or (args[0] if args and isinstance(args[0], str) else ""))
+        self.subtext = str(kwargs.get("subtext") or "")
+        self.create_view = kwargs.get("create_view")
+        self.on_click = kwargs.get("on_click")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.item_type,
+            "text": str(self.text or self.subtext),
         }
 
 
 __all__ = [
+    "Custom",
     "Divider",
     "EditText",
     "Header",

@@ -5,9 +5,11 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import json
+import re
 import sys
 import threading
 import traceback
+import zipfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -317,14 +319,113 @@ def _extract_plugin_metadata(module: Any, plugin_instance: Any, fallback_id: str
     }
 
 
+def _parse_simple_yaml(text: str) -> dict[str, Any]:
+    """Minimal key-value YAML parser for `.elyx` `metainfo.yml` and `refmap.yml`."""
+    data: dict[str, Any] = {}
+    current_list_key: str | None = None
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("- ") and current_list_key:
+            item = stripped[2:].strip().strip("'\"")
+            existing = data.setdefault(current_list_key, [])
+            if isinstance(existing, list):
+                existing.append(item)
+            continue
+        current_list_key = None
+        if ":" not in stripped:
+            continue
+        key, val = stripped.split(":", 1)
+        key = key.strip()
+        val = val.strip()
+        if not val:
+            data[key] = []
+            current_list_key = key
+        else:
+            data[key] = val.strip("'\"")
+    return data
+
+
+def _prepare_elyx_package(plugin_id: str, path_obj: Path) -> tuple[Path, dict[str, str], str]:
+    """Extract/resolve an `.elyx` plugin package into `ElyxPlugins/<id>` and register its Python module."""
+    import file_utils
+
+    elyx_base = Path(file_utils.get_plugins_dir()) / "ElyxPlugins"
+    elyx_base.mkdir(parents=True, exist_ok=True)
+
+    refmap: dict[str, Any] = {}
+    metainfo: dict[str, Any] = {}
+    if path_obj.is_file() and zipfile.is_zipfile(path_obj):
+        with zipfile.ZipFile(path_obj, "r") as zf:
+            for member in zf.namelist():
+                if ".." in Path(member).parts:
+                    raise ValueError(f"Unsafe path in .elyx archive: {member}")
+            if "refmap.yml" in zf.namelist():
+                refmap = _parse_simple_yaml(zf.read("refmap.yml").decode("utf-8", errors="replace"))
+            meta_name = str(refmap.get("metainfo") or "metainfo.yml")
+            if meta_name in zf.namelist():
+                metainfo = _parse_simple_yaml(zf.read(meta_name).decode("utf-8", errors="replace"))
+            pkg_id = str(metainfo.get("id") or plugin_id).strip() or plugin_id
+            pkg_dir = elyx_base / pkg_id
+            pkg_dir.mkdir(parents=True, exist_ok=True)
+            zf.extractall(pkg_dir)
+    elif path_obj.is_dir():
+        refmap_file = path_obj / "refmap.yml"
+        if refmap_file.is_file():
+            refmap = _parse_simple_yaml(refmap_file.read_text(encoding="utf-8", errors="replace"))
+        meta_file = path_obj / str(refmap.get("metainfo") or "metainfo.yml")
+        if meta_file.is_file():
+            metainfo = _parse_simple_yaml(meta_file.read_text(encoding="utf-8", errors="replace"))
+        pkg_id = str(metainfo.get("id") or plugin_id).strip() or plugin_id
+        pkg_dir = elyx_base / pkg_id
+        if path_obj.resolve() != pkg_dir.resolve():
+            import shutil
+
+            shutil.copytree(path_obj, pkg_dir, dirs_exist_ok=True)
+    else:
+        raise ValueError(f"Invalid .elyx package: {path_obj}")
+
+    if str(elyx_base) not in sys.path:
+        sys.path.insert(0, str(elyx_base))
+
+    init_file = pkg_dir / "__init__.py"
+    if init_file.is_file():
+        spec = importlib.util.spec_from_file_location(
+            pkg_id,
+            str(init_file),
+            submodule_search_locations=[str(pkg_dir)],
+        )
+        if spec and spec.loader:
+            pkg_mod = importlib.util.module_from_spec(spec)
+            sys.modules[pkg_id] = pkg_mod
+            spec.loader.exec_module(pkg_mod)
+
+    main_rel = str(refmap.get("main") or "src/main.py")
+    main_path = pkg_dir / main_rel
+
+    fallback_meta = {
+        "id": pkg_id,
+        "name": str(metainfo.get("name") or pkg_id),
+        "description": str(metainfo.get("description") or ""),
+        "author": str(metainfo.get("author") or "Unknown"),
+        "version": str(metainfo.get("version") or "1.0"),
+        "min_version": str(metainfo.get("min_version") or ""),
+        "icon": str(metainfo.get("icon") or ""),
+    }
+    main_mod_name = f"{pkg_id}.{main_rel.removesuffix('.py').replace('/', '.')}"
+    return main_path, fallback_meta, main_mod_name
+
+
 def load_plugin(plugin_id: str, file_path: str, module_name: str | None = None) -> dict[str, Any]:
-    """Import and initialize a Python `.plugin` script, isolating incompatibility/runtime failures."""
+    """Import and initialize a `.plugin` script or `.elyx` archive, isolating failures cleanly."""
     global _CURRENT_LOADING_ID
     import base_plugin
     from java import JavaNotSupportedError
 
     mod_name = module_name or f"ayu_plugin_{plugin_id}"
     path_obj = Path(file_path)
+    elyx_meta: dict[str, str] = {}
 
     with _LOCK:
         if plugin_id in _PLUGINS:
@@ -333,13 +434,21 @@ def load_plugin(plugin_id: str, file_path: str, module_name: str | None = None) 
         _CURRENT_LOADING_ID = plugin_id
 
     try:
+        if path_obj.suffix.lower() == ".elyx" or path_obj.is_dir():
+            entry_path, elyx_meta, mod_name = _prepare_elyx_package(plugin_id, path_obj)
+            if elyx_meta.get("id"):
+                _CURRENT_LOADING_ID = elyx_meta["id"]
+                _LOADING_DIAGNOSTICS[elyx_meta["id"]] = _LOADING_DIAGNOSTICS.get(plugin_id, [])
+        else:
+            entry_path = path_obj
+
         # `.plugin` files lack a `.py` extension, so bind SourceFileLoader explicitly.
-        loader = importlib.machinery.SourceFileLoader(mod_name, str(path_obj))
-        spec = importlib.util.spec_from_loader(mod_name, loader, origin=str(path_obj))
+        loader = importlib.machinery.SourceFileLoader(mod_name, str(entry_path))
+        spec = importlib.util.spec_from_loader(mod_name, loader, origin=str(entry_path))
         if spec is None or spec.loader is None:
-            raise ImportError(f"Cannot create module spec for {path_obj}")
+            raise ImportError(f"Cannot create module spec for {entry_path}")
         module = importlib.util.module_from_spec(spec)
-        module.__file__ = str(path_obj)
+        module.__file__ = str(entry_path)
         sys.modules[mod_name] = module
         spec.loader.exec_module(module)
 
@@ -351,14 +460,20 @@ def load_plugin(plugin_id: str, file_path: str, module_name: str | None = None) 
 
         instance = plugin_cls()
         meta = _extract_plugin_metadata(module, instance, plugin_id)
-        instance._ayu_bind_runtime(plugin_id=plugin_id, metadata=meta)
+        for k, v in elyx_meta.items():
+            if v and (not meta.get(k) or meta[k] in (plugin_id, mod_name, "Unknown", "1.0")):
+                meta[k] = v
+        resolved_id = meta.get("id") or plugin_id
+        instance._ayu_bind_runtime(plugin_id=resolved_id, metadata=meta)
 
         instance.on_plugin_load()
 
         with _LOCK:
-            warnings = list(_LOADING_DIAGNOSTICS.get(plugin_id, []))
-            if _METHOD_HOOKS.get(plugin_id, {}).get("send_message"):
+            warnings = list(_LOADING_DIAGNOSTICS.get(plugin_id, [])) + list(_LOADING_DIAGNOSTICS.get(resolved_id, []))
+            if _METHOD_HOOKS.get(plugin_id, {}).get("send_message") or _METHOD_HOOKS.get(resolved_id, {}).get("send_message") or _METHOD_HOOKS.get(plugin_id, {}).get("textutils_join") or _METHOD_HOOKS.get(resolved_id, {}).get("textutils_join"):
                 instance.add_on_send_message_hook()
+            if _CURRENT_LOADING_ID and _CURRENT_LOADING_ID != plugin_id and plugin_id in _METHOD_HOOKS:
+                pass
             entry = {
                 "id": plugin_id,
                 "module_name": mod_name,
@@ -450,9 +565,29 @@ def _iter_active_entries() -> list[dict[str, Any]]:
         return list(_PLUGINS.values())
 
 
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s<>\"']+")
+
+
+def _check_method_hook_filters(fn: Any, param_obj: HookParams) -> bool:
+    filters = getattr(fn, "_ayu_hook_filters", None) or []
+    args = param_obj.get("args") or []
+    for kind, idx, expected in filters:
+        if kind == "eq":
+            if idx >= len(args) or args[idx] != expected:
+                return False
+        elif kind == "ne":
+            if idx < len(args) and args[idx] == expected:
+                return False
+        elif kind == "cond" and callable(expected):
+            if not expected(param_obj):
+                return False
+    return True
+
+
 def dispatch_send_message_hook(account: int, params_dict: dict[str, Any]) -> dict[str, Any]:
     """Execute registered `on_send_message_hook` callbacks in priority order."""
     import base_plugin
+    from _java_bridge import _ArrayListShim
 
     current_params = HookParams(params_dict)
     modified = False
@@ -465,6 +600,35 @@ def dispatch_send_message_hook(account: int, params_dict: dict[str, Any]) -> dic
     for entry in entries:
         plugin_id = entry["id"]
         instance = entry["instance"]
+        resolved_id = entry.get("metadata", {}).get("id") or plugin_id
+        with _LOCK:
+            method_hooks = list(_METHOD_HOOKS.get(plugin_id, {}).get("send_message", []))
+            if resolved_id != plugin_id:
+                method_hooks.extend(_METHOD_HOOKS.get(resolved_id, {}).get("send_message", []))
+            textutils_hooks = list(_METHOD_HOOKS.get(plugin_id, {}).get("textutils_join", []))
+            if resolved_id != plugin_id:
+                textutils_hooks.extend(_METHOD_HOOKS.get(resolved_id, {}).get("textutils_join", []))
+
+        if textutils_hooks and current_params.message:
+            found_urls = _URL_IN_TEXT_RE.findall(str(current_params.message))
+            if found_urls:
+                for mh in textutils_hooks:
+                    try:
+                        url_list = _ArrayListShim(found_urls)
+                        tu_param = HookParams({"account": account, "args": [" ", url_list], "thisObject": None, "result": None})
+                        fn = getattr(mh, "before_hooked_method", None)
+                        if fn and _check_method_hook_filters(fn, tu_param):
+                            fn(tu_param)
+                            out_urls = [str(u) for u in tu_param.args[1]] if len(tu_param.args) > 1 else []
+                            if len(out_urls) == len(found_urls) and out_urls != found_urls:
+                                msg_text = str(current_params.message)
+                                for orig_u, new_u in zip(found_urls, out_urls):
+                                    if orig_u != new_u:
+                                        msg_text = msg_text.replace(orig_u, new_u, 1)
+                                current_params["message"] = msg_text
+                                modified = True
+                    except Exception as exc:
+                        log("error", plugin_id, f"TextUtils.join hook failed: {exc}\n{traceback.format_exc()}")
         with _LOCK:
             method_hooks = list(_METHOD_HOOKS.get(plugin_id, {}).get("send_message", []))
         for mh in method_hooks:
@@ -553,7 +717,19 @@ def export_settings_schema(plugin_id: str) -> list[dict[str, Any]]:
 
     callbacks: dict[str, Callable[..., Any]] = {}
     exported: list[dict[str, Any]] = []
-    for index, item in enumerate(items):
+
+    def _flatten_items(seq, depth=0):
+        for item in seq:
+            yield item
+            sub_fn = getattr(item, "create_sub_fragment", None)
+            if depth < 2 and callable(sub_fn):
+                try:
+                    sub_items = sub_fn() or []
+                    yield from _flatten_items(sub_items, depth + 1)
+                except Exception:
+                    pass
+
+    for index, item in enumerate(_flatten_items(items)):
         if hasattr(item, "to_dict"):
             row = item.to_dict()
         elif isinstance(item, dict):

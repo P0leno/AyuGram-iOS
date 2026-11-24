@@ -35,10 +35,18 @@ def find_constructor(*_args: Any, **_kwargs: Any) -> Any:
 
 def hook_method(method_ref: Any, *args: Any, **kwargs: Any) -> Any:
     import _ayu_runtime_host
-    from _java_bridge import MessagesControllerBridge, SendMessagesHelperBridge
+    from _java_bridge import MessagesControllerBridge, SendMessagesHelperBridge, _ReflectedMember
 
     handler = args[-1] if args else kwargs.get("handler")
     method_name = str(args[0]) if len(args) >= 2 and isinstance(args[0], str) else str(method_ref)
+    if isinstance(method_ref, _ReflectedMember):
+        if method_ref.owner_name == "android.text.TextUtils" and method_ref.member_name == "join":
+            return _ayu_runtime_host.register_method_hook("textutils_join", handler)
+        if method_ref.owner_name == "org.telegram.messenger.SendMessagesHelper":
+            return _ayu_runtime_host.register_method_hook("send_message", handler)
+        if method_ref.owner_name == "org.telegram.messenger.MessagesController":
+            return _ayu_runtime_host.register_method_hook("receive_message", handler)
+        raise _unsupported("hook_utils.hook_method", f"{method_ref.owner_name}.{method_ref.member_name}")
     if method_ref in (SendMessagesHelperBridge, "SendMessagesHelper") or "sendMessage" in method_name:
         if getattr(method_ref, "_ayu_bridged", False) or isinstance(method_ref, type) and method_ref is SendMessagesHelperBridge:
             return _ayu_runtime_host.register_method_hook("send_message", handler)
@@ -108,6 +116,10 @@ def set_static_field(clazz: Any, field_name: str, value: Any) -> None:
     raise _unsupported("hook_utils.set_static_field", f"{clazz}.{field_name}")
 
 
+get_static_private_field = get_static_field
+set_static_private_field = set_static_field
+
+
 def call_private_method(obj: Any, method_name: str, *args: Any) -> Any:
     if _is_bridged_target(obj) and hasattr(obj, method_name):
         fn = getattr(obj, method_name)
@@ -148,11 +160,13 @@ __all__ = [
     "find_method",
     "get_private_field",
     "get_static_field",
+    "get_static_private_field",
     "hook_all_constructors",
     "hook_all_methods",
     "hook_method",
     "hook_methods",
     "set_private_field",
     "set_static_field",
+    "set_static_private_field",
     "unhook_method",
 ]

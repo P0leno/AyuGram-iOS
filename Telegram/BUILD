@@ -2101,6 +2101,7 @@ plist_fragment(
                 <key>public.filename-extension</key>
                 <array>
                     <string>plugin</string>
+                    <string>elyx</string>
                 </array>
             </dict>
         </dict>
