@@ -629,8 +629,6 @@ def dispatch_send_message_hook(account: int, params_dict: dict[str, Any]) -> dic
                                 modified = True
                     except Exception as exc:
                         log("error", plugin_id, f"TextUtils.join hook failed: {exc}\n{traceback.format_exc()}")
-        with _LOCK:
-            method_hooks = list(_METHOD_HOOKS.get(plugin_id, {}).get("send_message", []))
         for mh in method_hooks:
             try:
                 orig_message = current_params.message
